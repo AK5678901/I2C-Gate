@@ -1,0 +1,28 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "pico",
+      "displayName": "Raspberry Pi Pico (Windows)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/../build/pico",
+      "environment": {
+        "PICO_SDK_PATH": "$penv{USERPROFILE}/.pico-sdk/sdk/2.3.0",
+        "PICO_TOOLCHAIN_PATH": "$penv{USERPROFILE}/.pico-sdk/toolchain/15_2_Rel1",
+        "PATH": "$penv{USERPROFILE}/.pico-sdk/toolchain/15_2_Rel1/bin;$penv{USERPROFILE}/.pico-sdk/python/3.13.7;$penv{PATH}"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_MAKE_PROGRAM": "$penv{USERPROFILE}/.pico-sdk/ninja/v1.13.2/ninja.exe",
+        "PICO_BOARD": "pico",
+        "picotool_DIR": "$penv{USERPROFILE}/.pico-sdk/picotool/2.3.0/picotool"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "pico",
+      "configurePreset": "pico"
+    }
+  ]
+}

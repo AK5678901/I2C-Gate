@@ -1,3 +1,4 @@
 {
-    "cmake.sourceDirectory": "C:/work/GitHub/I2C-Gate/firmware"
+    "cmake.sourceDirectory": "${workspaceFolder}/firmware",
+    "cmake.useCMakePresets": "always"
 }

@@ -2,11 +2,19 @@
 
 Raspberry Pi Pico（RP2040）をI2Cホストとデバイスの間に接続し、宛先やデータを変更する試作です。Windows GUI、JSON設定、USB設定転送、GPIOを直接制御するファームウェアのソースを含みます。
 
-**GUIとフィルタ処理はテスト済みです。Pico向けARMビルド、実機USB通信、I2C波形、400 kHz動作は未検証です。完成・動作保証済みの中継器ではありません。**
+**GUIとフィルタ処理はテスト済みです。Pico向けARMビルドとUF2生成を確認済みです。実機USB通信、I2C波形、400 kHz動作は未検証です。完成・動作保証済みの中継器ではありません。**
 
 ## Windows GUIを起動
 
 Python 3.9以降（tkinter付き）を使用します。
+
+Pico拡張付属の `.pico-sdk/python` は組み込み用Pythonでtkinterを含まないため、GUIには使えません。通常版Pythonをインストールしてください。
+
+```powershell
+winget install --id Python.Python.3.13 --exact --source winget --scope user
+```
+
+インストール後はターミナルを開き直して、次を実行します。
 
 ```powershell
 py -m pip install -r requirements.txt
@@ -105,6 +113,18 @@ READ応答の条件で遮断する場合、すでに返した先行バイトは�
 
 ## Picoファームウェアのビルド
 
+このWindows環境では、インストール済みのPico拡張のツールを使って、プロジェクト直下から実行できます。
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build_pico.ps1
+```
+
+VS Codeでは **Ctrl+Shift+B**（`Build Pico firmware`）でも同じビルドを実行できます。CMake Toolsを使う場合は、構成プリセット `pico` を選択してください。
+
+`firmware/CMakePresets.json` は `%USERPROFILE%/.pico-sdk` 配下のSDK 2.3.0、Arm GNU Toolchain 15_2_Rel1、Python 3.13.7、Ninja v1.13.2、picotool 2.3.0を参照します。スクリプトは同じ場所のCMake v4.3.4を優先し、なければPATHのCMakeを使います。別PCでツールのバージョンが異なる場合はプリセットとスクリプトのパスを合わせてください。
+
+独自に用意したツールを使う場合は、以下の手順も利用できます（プリセットと異なるツールを使う際は別のビルドディレクトリを指定してください）。
+
 Pico C/C++ SDK、Arm GNU Toolchain（`arm-none-eabi-gcc`）、CMake、Ninjaを用意します。SDKのサブモジュール（TinyUSBなど）も必要です。
 
 ```powershell
@@ -132,7 +152,7 @@ py -m unittest discover -s tests -v
 
 本環境では31テストが成功しました。C側のデコーダ／フィルタをWindows DLLにビルドし、Python側との300ケースの比較、CRC、不正・切断データの検証、GUIの編集・並べ替え・結果表示を含みます。DLL未生成時はCの4テストをスキップします。
 
-Pico用コンパイラは本環境になく、公式配布先へのダウンロードがタイムアウトしたため、ARMビルドとUF2生成は未確認です。USBテストは通信相手を模擬したものです。
+Pico SDK 2.3.0とArm GNU Toolchain 15.2.Rel1を使用し、Release構成のARMビルドと `build/pico/i2c_gate.uf2` の生成を確認しました。実機への書き込みと動作確認は未実施です。USBテストは通信相手を模擬したものです。
 
 初期対応範囲は単一ホスト・7 bit通常アドレスです。10 bit、General Call、マルチホスト、SMBus PEC自動再計算、電源断後の設定保持は未実装です。未知のプロトコルのレジスタ状態は仮想化しません。遮断／失敗したWRITEに同じRepeated START連鎖で続くREADはNACKします。
 
