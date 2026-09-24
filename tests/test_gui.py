@@ -1,0 +1,51 @@
+from pathlib import Path
+import tkinter as tk
+import unittest
+
+from i2c_gate.config import loads
+from i2c_gate.gui import App, RuleDialog
+
+
+class GuiTests(unittest.TestCase):
+    def setUp(self):
+        try:
+            self.app = App()
+        except tk.TclError as error:
+            self.skipTest(str(error))
+        self.app.withdraw()
+        self.app.cfg = loads((Path(__file__).resolve().parents[1] / "examples" / "filters.json").read_text(encoding="utf-8"))
+        self.app.refresh(0)
+
+    def tearDown(self):
+        if hasattr(self, "app"):
+            self.app.destroy()
+
+    def test_rule_edit_and_table(self):
+        dialog = RuleDialog(self.app, self.app.cfg, 0)
+        dialog.withdraw()
+        dialog.fields["name"].set("変更したルール")
+        dialog.apply()
+        self.assertEqual(dialog.result["rules"][0]["name"], "変更したルール")
+        self.app.cfg = dialog.result
+        self.app.changed(0)
+        self.assertIn("変更したルール", self.app.tree.item("0", "values"))
+        self.assertTrue(self.app.dirty)
+
+    def test_priority_duplicate_toggle_delete(self):
+        name = self.app.cfg["rules"][0]["name"]
+        self.app.move(1)
+        self.assertEqual(self.app.cfg["rules"][1]["name"], name)
+        self.app.duplicate()
+        self.assertEqual(len(self.app.cfg["rules"]), 7)
+        self.app.toggle()
+        self.assertFalse(self.app.cfg["rules"][2]["enabled"])
+        self.app.delete()
+        self.assertEqual(len(self.app.cfg["rules"]), 6)
+
+    def test_simulation_output(self):
+        self.app.run_simulation()
+        output = self.app.output.get("1.0", "end")
+        self.assertIn("10 00 55", output)
+        self.assertIn("modify", output)
+        self.app.changed()
+        self.assertIn("再度検証", self.app.output.get("1.0", "end"))

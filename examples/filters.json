@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "bus": {
+    "speed_hz": 100000,
+    "stretch_timeout_us": 25000,
+    "max_write_bytes": 256,
+    "addresses": ["0x40", "0x50"],
+    "read_block_fill": "0xFF"
+  },
+  "rules": [
+    {
+      "name": "WRITE 0x50 レジスタ0x10の値を変更",
+      "enabled": true,
+      "phase": "write",
+      "match": {"address": "0x50", "payload": [{"offset": 0, "value": "0x10"}]},
+      "action": "modify",
+      "patches": [{"offset": 1, "value": "0x00"}]
+    },
+    {
+      "name": "WRITE 0x50 レジスタ0x20を遮断",
+      "enabled": true,
+      "phase": "write",
+      "match": {"address": "0x50", "payload": [{"offset": 0, "value": "0x20"}]},
+      "action": "block"
+    },
+    {
+      "name": "READ 0x50の宛先を0x51へ変更",
+      "enabled": true,
+      "phase": "read_request",
+      "match": {"address": "0x50", "payload": []},
+      "action": "pass",
+      "destination": "0x51"
+    },
+    {
+      "name": "READ 0x40のbit7をクリア",
+      "enabled": true,
+      "phase": "read_response",
+      "match": {"address": "0x40", "payload": [{"offset": 0, "value": "0x80", "mask": "0x80"}]},
+      "action": "modify",
+      "patches": [{"offset": 0, "value": 0, "mask": "0x80"}]
+    },
+    {
+      "name": "READ 0x40を開始前に遮断（例・無効）",
+      "enabled": false,
+      "phase": "read_request",
+      "match": {"address": "0x40", "payload": []},
+      "action": "block"
+    },
+    {
+      "name": "READ 0x50の先頭0xDEなら代替値へ（例・無効）",
+      "enabled": false,
+      "phase": "read_response",
+      "match": {"address": "0x50", "payload": [{"offset": 0, "value": "0xDE"}]},
+      "action": "block"
+    }
+  ]
+}
