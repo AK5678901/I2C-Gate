@@ -4,6 +4,7 @@
 #include "pico/multicore.h"
 #include "hardware/sync.h"
 #include "gpio_bridge.h"
+#include "i2c_echo_stub.h"
 
 static uint8_t incoming[65536];
 static uint32_t u32(const uint8_t *p) {
@@ -13,6 +14,7 @@ static uint32_t u32(const uint8_t *p) {
 int main(void) {
     stdio_init_all();
     bridge_init();
+    i2c_echo_stub_init();
     multicore_launch_core1(bridge_core1);
     uint8_t header[12];
     size_t pos = 0, length = 0, received = 0;
