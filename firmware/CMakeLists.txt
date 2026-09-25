@@ -1,14 +1,7 @@
 cmake_minimum_required(VERSION 3.13)
-include("$ENV{PICO_SDK_PATH}/external/pico_sdk_import.cmake")
+# Keep the existing firmware presets and build directory working. The project
+# definition lives at the workspace root for Raspberry Pi Pico extension detection.
+include("${CMAKE_CURRENT_LIST_DIR}/../CMakeLists.txt")
+# CMake requires a literal project() here to avoid inserting an implicit one
+# before the included Pico SDK has selected the cross-compilation toolchain.
 project(i2c_gate C CXX ASM)
-set(CMAKE_C_STANDARD 11)
-pico_sdk_init()
-add_executable(i2c_gate main.c gate_config.c gpio_bridge.c i2c_echo_stub.c echo_fifo.c)
-target_compile_options(i2c_gate PRIVATE -Wall -Wextra -Werror -O2)
-target_compile_definitions(i2c_gate PRIVATE PICO_STDIO_USB_STDOUT_TIMEOUT_US=1000)
-target_link_libraries(i2c_gate pico_stdlib pico_multicore hardware_sync hardware_clocks pico_i2c_slave)
-pico_enable_stdio_usb(i2c_gate 1)
-pico_enable_stdio_uart(i2c_gate 0)
-# Core 1 polling and filter paths must not stall on XIP cache misses.
-pico_set_binary_type(i2c_gate copy_to_ram)
-pico_add_extra_outputs(i2c_gate)

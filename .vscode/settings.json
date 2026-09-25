@@ -1,4 +1,9 @@
 {
     "cmake.sourceDirectory": "${workspaceFolder}/firmware",
-    "cmake.useCMakePresets": "always"
+    "cmake.useCMakePresets": "always",
+    "cmake.cmakePath": "${userHome}/.pico-sdk/cmake/v4.3.4/bin/cmake.exe",
+    "raspberry-pi-pico.cmakeAutoConfigure": false,
+    "raspberry-pi-pico.useCmakeTools": false,
+    "raspberry-pi-pico.cmakePath": "${HOME}/.pico-sdk/cmake/v4.3.4/bin/cmake.exe",
+    "raspberry-pi-pico.ninjaPath": "${HOME}/.pico-sdk/ninja/v1.13.2/ninja.exe"
 }

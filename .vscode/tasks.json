@@ -12,6 +12,20 @@
       ],
       "group": { "kind": "build", "isDefault": true },
       "problemMatcher": "$gcc"
+    },
+    {
+      "label": "Compile Project",
+      "dependsOn": "Build Pico firmware",
+      "problemMatcher": []
+    },
+    {
+      "label": "Run Project",
+      "type": "process",
+      "command": "${env:USERPROFILE}/.pico-sdk/picotool/2.3.0/picotool/picotool.exe",
+      "args": ["load", "${workspaceFolder}/build/pico/i2c_gate.uf2", "-fx"],
+      "dependsOn": "Build Pico firmware",
+      "presentation": { "reveal": "always", "panel": "dedicated" },
+      "problemMatcher": []
     }
   ]
 }

@@ -123,6 +123,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build_pico.ps1
 
 VS Codeでは **Ctrl+Shift+B**（`Build Pico firmware`）でも同じビルドを実行できます。CMake Toolsを使う場合は、構成プリセット `pico` を選択してください。
 
+Raspberry Pi Pico拡張を使う場合は、このリポジトリのルートフォルダをVS Codeで開いてください。設定反映後に **Developer: Reload Window** を実行するとPicoプロジェクトとして認識されます。拡張の **Run Project** ボタンでビルド後にUSB経由で書き込み・起動します。初回はPicoのBOOTSELを押しながらUSB接続してください。書き込み対象は `build/pico/i2c_gate.uf2` です。拡張の **Compile Project** ボタンも既存のビルドスクリプトを使用します。
+
+拡張が認識するSDK・ツールチェーン・ボード設定とファームウェアのビルド定義はルートの `CMakeLists.txt` にあります。`firmware/CMakeLists.txt` はこれを読み込み、従来のプリセットと `cmake -S firmware` に対応します。
+
 `firmware/CMakePresets.json` は `%USERPROFILE%/.pico-sdk` 配下のSDK 2.3.0、Arm GNU Toolchain 15_2_Rel1、Python 3.13.7、Ninja v1.13.2、picotool 2.3.0を参照します。スクリプトは同じ場所のCMake v4.3.4を優先し、なければPATHのCMakeを使います。別PCでツールのバージョンが異なる場合はプリセットとスクリプトのパスを合わせてください。
 
 独自に用意したツールを使う場合は、以下の手順も利用できます（プリセットと異なるツールを使う際は別のビルドディレクトリを指定してください）。
