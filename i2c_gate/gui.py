@@ -10,6 +10,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from .config import ACTIONS, PHASES, ConfigError, default_config, dumps, loads, number, validate
+from .conditions import from_match, to_match, from_changes, to_changes
 from .engine import simulate
 from .wire import upload
 
@@ -42,18 +43,15 @@ class RuleDialog(tk.Toplevel):
         self.resizable(True, True)
         item = config["rules"][index] if index is not None else {
             "name": "新しいルール", "enabled": True, "phase": "write",
-            "match": {"address": "*", "payload": []}, "action": "pass", "patches": []}
+            "match": {"address": "*", "payload": []}, "action": "modify", "patches": []}
         box = ttk.Frame(self, padding=16)
         box.pack(fill="both", expand=True)
         box.columnconfigure(1, weight=1)
         self.fields = {}
         values = {"name": item["name"], "phase": item["phase"],
-                  "address": "*" if item["match"]["address"] == "*" else f'0x{item["match"]["address"]:02X}',
-                  "action": item["action"],
-                  "destination": f'0x{item["destination"]:02X}' if "destination" in item else ""}
+                  "action": item["action"]}
         for row, (key, label) in enumerate((("name", "ルール名"), ("phase", "判定タイミング"),
-                                           ("address", "上流アドレス（* = 任意）"),
-                                           ("action", "動作"), ("destination", "下流宛先（空欄 = 維持）"))):
+                                           ("action", "動作"))):
             ttk.Label(box, text=label).grid(row=row, column=0, sticky="w", padx=(0, 16), pady=5)
             value = tk.StringVar(value=values[key])
             self.fields[key] = value
@@ -64,33 +62,81 @@ class RuleDialog(tk.Toplevel):
                 widget = ttk.Entry(box, textvariable=value, width=42)
             widget.grid(row=row, column=1, sticky="ew")
         self.enabled = tk.BooleanVar(value=item["enabled"])
-        ttk.Checkbutton(box, text="このルールを有効にする", variable=self.enabled).grid(row=5, column=1, sticky="w")
+        ttk.Checkbutton(box, text="このルールを有効にする", variable=self.enabled).grid(row=4, column=1, sticky="w")
         ttk.Label(box, text="write: 書込 / read_request: 読出前 / read_response: 読出結果\n"
-                            "pass: 通過 / modify: 部分書換 / block: 遮断").grid(row=6, column=0, columnspan=2, sticky="w", pady=8)
-        ttk.Label(box, text="ペイロード条件（JSON配列、全条件AND）").grid(row=7, column=0, columnspan=2, sticky="w")
+                            "modify: アドレス・データ書換 / block: 遮断（不一致ならそのまま通過）").grid(row=5, column=0, columnspan=2, sticky="w", pady=8)
+        ttk.Label(box, text="一致条件（I2Cアドレス・データ／全条件AND）").grid(row=6, column=0, columnspan=2, sticky="w")
+        condition_buttons = ttk.Frame(box)
+        condition_buttons.grid(row=7, column=0, columnspan=2, sticky="w")
+        ttk.Button(condition_buttons, text="I2Cアドレス条件を追加",
+                   command=lambda: self.add_condition("address")).pack(side="left")
+        ttk.Button(condition_buttons, text="データ条件を追加",
+                   command=lambda: self.add_condition("data")).pack(side="left", padx=6)
         self.predicates = tk.Text(box, height=5, width=66, undo=True)
         self.predicates.grid(row=8, column=0, columnspan=2, sticky="nsew")
-        self.predicates.insert("1.0", json.dumps(item["match"]["payload"], indent=2))
-        ttk.Label(box, text="書き換え（JSON配列、modifyのみ）").grid(row=9, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        self.predicates.insert("1.0", json.dumps(from_match(item["match"]), indent=2))
+        ttk.Label(box, text='target: address = 上流I2Cアドレス（7ビット）、data = データ\n'
+                            'アドレス条件なし／valueが"*"なら全アドレス（0x08〜0x77）。[]は条件なし。\n'
+                            '下流宛先への変更も、すべての一致条件が成立したときに適用します。').grid(
+                                row=9, column=0, columnspan=2, sticky="w", pady=5)
+        ttk.Label(box, text="書き換え内容（I2Cアドレス・データ／JSON配列）").grid(row=10, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        change_buttons = ttk.Frame(box)
+        change_buttons.grid(row=11, column=0, columnspan=2, sticky="w")
+        ttk.Button(change_buttons, text="I2Cアドレス書き換えを追加",
+                   command=lambda: self.add_change("address")).pack(side="left")
+        ttk.Button(change_buttons, text="データ書き換えを追加",
+                   command=lambda: self.add_change("data")).pack(side="left", padx=6)
         self.patches = tk.Text(box, height=5, width=66, undo=True)
-        self.patches.grid(row=10, column=0, columnspan=2, sticky="nsew")
-        self.patches.insert("1.0", json.dumps(item.get("patches", []), indent=2))
-        ttk.Label(box, text='例: [{"offset": 0, "value": "0x10", "mask": "0xFF"}]\n'
-                            'offsetは0始まり。mask省略時は0xFF。').grid(row=11, column=0, columnspan=2, sticky="w", pady=8)
+        self.patches.grid(row=12, column=0, columnspan=2, sticky="nsew")
+        self.patches.insert("1.0", json.dumps(from_changes(item), indent=2))
+        ttk.Label(box, text='address: valueが下流宛先（7ビット）。省略すると元のアドレスを維持。\n'
+                            'アドレス・データの変更はmodify。blockは[]。\n'
+                            'アドレス変更はwrite/read_requestのみ。offsetはデータの0バイト目から。').grid(
+                                row=13, column=0, columnspan=2, sticky="w", pady=8)
         buttons = ttk.Frame(box)
-        buttons.grid(row=12, column=0, columnspan=2, sticky="e")
+        buttons.grid(row=14, column=0, columnspan=2, sticky="e")
         ttk.Button(buttons, text="キャンセル", command=self.destroy).pack(side="left", padx=4)
         ttk.Button(buttons, text="適用", command=self.apply).pack(side="left")
         self.bind("<Escape>", lambda _: self.destroy())
+
+    def add_condition(self, target):
+        try:
+            conditions = json.loads(self.predicates.get("1.0", "end"))
+            to_match(conditions)
+            if target == "address":
+                if any(c["target"] == "address" for c in conditions):
+                    raise ConfigError("I2Cアドレス条件は追加済みです。既存のvalueを編集してください。")
+                conditions.insert(0, {"target": "address", "value": "0x50"})
+            else:
+                conditions.append({"target": "data", "offset": 0, "value": "0x00", "mask": "0xFF"})
+        except (ValueError, TypeError) as error:
+            messagebox.showerror("条件を追加できません", str(error), parent=self)
+            return
+        self.predicates.delete("1.0", "end")
+        self.predicates.insert("1.0", json.dumps(conditions, indent=2))
+
+    def add_change(self, target):
+        try:
+            changes = json.loads(self.patches.get("1.0", "end"))
+            to_changes(changes)
+            if target == "address":
+                if any(c["target"] == "address" for c in changes):
+                    raise ConfigError("I2Cアドレス書き換えは追加済みです。既存のvalueを編集してください。")
+                changes.insert(0, {"target": "address", "value": "0x52"})
+            else:
+                changes.append({"target": "data", "offset": 0, "value": "0x00", "mask": "0xFF"})
+        except (ValueError, TypeError) as error:
+            messagebox.showerror("書き換えを追加できません", str(error), parent=self)
+            return
+        self.patches.delete("1.0", "end")
+        self.patches.insert("1.0", json.dumps(changes, indent=2))
 
     def apply(self):
         try:
             fields = {key: value.get().strip() for key, value in self.fields.items()}
             rule = {"name": fields["name"], "enabled": self.enabled.get(), "phase": fields["phase"],
-                    "match": {"address": fields["address"], "payload": json.loads(self.predicates.get("1.0", "end"))},
-                    "action": fields["action"], "patches": json.loads(self.patches.get("1.0", "end"))}
-            if fields["destination"]:
-                rule["destination"] = fields["destination"]
+                    "match": to_match(json.loads(self.predicates.get("1.0", "end"))),
+                    "action": fields["action"], **to_changes(json.loads(self.patches.get("1.0", "end")))}
             candidate = copy.deepcopy(self.config_data)
             if self.index is None:
                 candidate["rules"].append(rule)
@@ -160,7 +206,7 @@ class App(tk.Tk):
         columns = ("enabled", "name", "phase", "address", "conditions", "action", "destination")
         self.tree = ttk.Treeview(list_frame, columns=columns, show="headings", selectmode="browse")
         for col, title, width in zip(columns,
-                                    ("有効", "名前", "タイミング", "アドレス", "条件 / 書換", "動作", "下流宛先"),
+                                    ("有効", "名前", "タイミング", "アドレス条件", "一致条件 / データ書換", "動作", "下流宛先"),
                                     (45, 220, 140, 80, 110, 70, 80)):
             self.tree.heading(col, text=title)
             self.tree.column(col, width=width, minwidth=40)
@@ -210,15 +256,14 @@ class App(tk.Tk):
             address = rule["match"]["address"]
             self.tree.insert("", "end", iid=str(index), values=("✓" if rule["enabled"] else "—", rule["name"],
                 rule["phase"], "*" if address == "*" else f"0x{address:02X}",
-                f'{len(rule["match"]["payload"])} / {len(rule.get("patches", []))}', rule["action"],
+                f'{len(from_match(rule["match"]))} / {len(rule.get("patches", []))}', rule["action"],
                 f'0x{rule["destination"]:02X}' if "destination" in rule else "維持"))
         if selection is not None and 0 <= selection < len(self.cfg["rules"]):
             self.tree.selection_set(str(selection))
             self.tree.see(str(selection))
         bus = self.cfg["bus"]
-        addresses = ", ".join(f"0x{a:02X}" for a in bus["addresses"])
         self.info.configure(text=f'設定: {bus["speed_hz"] / 1000:g} kHz  /  ストレッチ上限 {bus["stretch_timeout_us"]} µs  /  '
-                                 f'WRITE上限 {bus["max_write_bytes"]} B  /  上流 {addresses}', wraplength=1000)
+                                 f'WRITE上限 {bus["max_write_bytes"]} B  /  既定: 全アドレス通過（0x08〜0x77）', wraplength=1000)
         self.status.configure(text=f'{len(self.cfg["rules"])} ルール  |  {self.path or "ファイル未選択"}  |  '
                                    f'{"未保存の変更あり" if self.dirty else "変更なし"}')
         self.show_rule()
@@ -362,7 +407,7 @@ class App(tk.Tk):
             address = number(self.address.get().strip(), 0x08, 0x77, "address")
             data = bytes.fromhex(self.data_input.get("1.0", "end").strip())
             result = simulate(self.cfg, self.direction.get(), address, data)
-            text = f'動作: {result.action}\n一致ルール: {" → ".join(result.rules) or "なし（既定動作）"}\n'
+            text = f'動作: {result.action or "変更なし（既定動作）"}\n一致ルール: {" → ".join(result.rules) or "なし（既定動作）"}\n'
             text += f'下流宛先: 0x{result.destination:02X}\n下流アクセス: {"あり" if result.downstream_access else "なし"}\n'
             text += f'出力 ({len(result.payload)} B): {result.payload.hex(" ").upper() or "（なし）"}\n\n{result.explanation}'
             self.set_text(self.output, text)

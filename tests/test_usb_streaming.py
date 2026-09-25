@@ -46,7 +46,8 @@ class USBTests(unittest.TestCase):
         self.assertEqual(packet[:4], b"I2CG")
         self.assertEqual(len(packet) - 12, length)
         self.assertEqual(zlib.crc32(packet[12:]), crc)
-        self.assertEqual(struct.unpack("<BIIHBBB", packet[12:26]), (1, 100000, 25000, 256, 255, 1, 0))
+        self.assertEqual(struct.unpack("<BIIHBBB", packet[12:26]), (1, 100000, 25000, 256, 255, 112, 0))
+        self.assertEqual(packet[26:138], bytes(range(0x08, 0x78)))
 
     def test_upload_checks_ack(self):
         self.assertIn("RAM", upload("COM7", default_config(), FakeSerial))
@@ -86,7 +87,7 @@ class StreamingTests(unittest.TestCase):
         self.assertEqual(simulate(cfg, "read", 0x50, b"\x01\x02\x03\x04").payload, b"\x01\x02\xff\xff")
 
     def test_priority_is_evaluated_at_each_byte(self):
-        cfg = self.config("pass", [{"offset": 1, "value": 2}])
+        cfg = self.config("modify", [{"offset": 1, "value": 2}], [{"offset": 1, "value": 2}])
         later = copy.deepcopy(cfg["rules"][0])
         later.update(name="lower priority", action="modify", patches=[{"offset": 0, "value": 7}])
         later["match"]["payload"] = []

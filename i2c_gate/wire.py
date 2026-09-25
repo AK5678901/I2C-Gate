@@ -12,13 +12,14 @@ def encode_config(raw):
     bus = cfg["bus"]
     result = bytearray(struct.pack("<BIIHBBB", 1, bus["speed_hz"], bus["stretch_timeout_us"],
                                    bus["max_write_bytes"], bus["read_block_fill"],
-                                   len(bus["addresses"]), len(cfg["rules"])))
-    result.extend(bus["addresses"])
+                                   112, len(cfg["rules"])))
+    # Keep the v1 wire layout, enabling every supported address on older firmware too.
+    result.extend(range(0x08, 0x78))
     for rule in cfg["rules"]:
         # Firmware uses rule indices for diagnostics; names stay in the JSON/GUI.
         result.extend(struct.pack("<BBBBBBB", int(rule["enabled"]),
             ("write", "read_request", "read_response").index(rule["phase"]),
-            ("pass", "modify", "block").index(rule["action"]),
+            {"modify": 1, "block": 2}[rule["action"]],
             255 if rule["match"]["address"] == "*" else rule["match"]["address"],
             rule.get("destination", 255), len(rule["match"]["payload"]), len(rule["patches"])))
         for item in rule["match"]["payload"] + rule["patches"]:

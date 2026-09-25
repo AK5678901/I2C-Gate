@@ -1,11 +1,12 @@
 """Offline reference model. This does not perform I2C transfers."""
 from dataclasses import dataclass
+from typing import Optional
 from .config import MAX_PAYLOAD, number, validate
 
 
 @dataclass
 class Result:
-    action: str
+    action: Optional[str]
     destination: int
     payload: bytes
     rules: tuple
@@ -33,7 +34,7 @@ def _evaluate(cfg, phase, address, data, streaming=False):
                 continue
             output[pos] = (output[pos] & (255 ^ mask)) | (patch["value"] & mask)
         return rule["action"], rule.get("destination", address), bytes(output), (rule["name"],)
-    return "pass", address, data, ()
+    return None, address, data, ()
 
 
 def simulate(raw_config, direction, address, data):
@@ -43,8 +44,6 @@ def simulate(raw_config, direction, address, data):
         raise ValueError("directionはwrite/readを指定してください")
     if not isinstance(data, bytes) or len(data) > MAX_PAYLOAD:
         raise ValueError(f"ペイロードは最大{MAX_PAYLOAD}バイトのbytesが必要です")
-    if address not in cfg["bus"]["addresses"]:
-        return Result("block", address, b"", (), False, "代理応答対象外: アドレスNACK")
     if direction == "write":
         if len(data) > cfg["bus"]["max_write_bytes"]:
             return Result("block", address, b"", (), False, "WRITEバッファ上限超過: 転送しない")
@@ -56,7 +55,7 @@ def simulate(raw_config, direction, address, data):
         return Result("block", dest, b"", names, False, "READアドレスNACK: 下流READなし")
     output = bytearray()
     response_names = []
-    overall = "pass"
+    overall = action
     blocked = False
     for offset in range(len(data)):
         if blocked:

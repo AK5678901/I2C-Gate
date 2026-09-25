@@ -6,7 +6,7 @@ MAX_RULES = 64
 MAX_PAYLOAD = 4096
 MAX_JSON_BYTES = 65536
 PHASES = ("write", "read_request", "read_response")
-ACTIONS = ("pass", "modify", "block")
+ACTIONS = ("modify", "block")
 
 
 class ConfigError(ValueError):
@@ -39,16 +39,19 @@ def validate(raw):
     obj(cfg, ("version", "bus", "rules"), (), "config")
     cfg["version"] = number(cfg["version"], 1, 1, "version")
     bus = cfg["bus"]
-    obj(bus, ("speed_hz", "stretch_timeout_us", "max_write_bytes", "addresses", "read_block_fill"), (), "bus")
+    obj(bus, ("speed_hz", "stretch_timeout_us", "max_write_bytes", "read_block_fill"), ("addresses",), "bus")
     bus["speed_hz"] = number(bus["speed_hz"], 10000, 400000, "bus.speed_hz")
     bus["stretch_timeout_us"] = number(bus["stretch_timeout_us"], 1, 1000000, "bus.stretch_timeout_us")
     bus["max_write_bytes"] = number(bus["max_write_bytes"], 1, MAX_PAYLOAD, "bus.max_write_bytes")
     bus["read_block_fill"] = number(bus["read_block_fill"], 0, 255, "bus.read_block_fill")
-    if not isinstance(bus["addresses"], list) or not 1 <= len(bus["addresses"]) <= 112:
-        raise ConfigError("bus.addresses: 1〜112個のアドレスが必要です")
-    bus["addresses"] = [number(a, 0x08, 0x77, "bus.addresses") for a in bus["addresses"]]
-    if len(set(bus["addresses"])) != len(bus["addresses"]):
-        raise ConfigError("bus.addresses: アドレスが重複しています")
+    # Accept old files, but an address allowlist no longer limits forwarding.
+    if "addresses" in bus:
+        addresses = bus.pop("addresses")
+        if not isinstance(addresses, list) or len(addresses) > 112:
+            raise ConfigError("bus.addresses: 最大112個のアドレスを指定してください")
+        addresses = [number(a, 0x08, 0x77, "bus.addresses") for a in addresses]
+        if len(set(addresses)) != len(addresses):
+            raise ConfigError("bus.addresses: アドレスが重複しています")
     if not isinstance(cfg["rules"], list) or len(cfg["rules"]) > MAX_RULES:
         raise ConfigError(f"rules: 最大{MAX_RULES}件です")
     names = set()
@@ -68,8 +71,6 @@ def validate(raw):
         obj(match, ("address", "payload"), (), f"{p}.match")
         if match["address"] != "*":
             match["address"] = number(match["address"], 0x08, 0x77, f"{p}.match.address")
-            if match["address"] not in bus["addresses"]:
-                raise ConfigError(f"{p}: 上流アドレスがbus.addressesにありません")
         if not isinstance(match["payload"], list) or len(match["payload"]) > 64:
             raise ConfigError(f"{p}.match.payload: 最大64条件です")
         if rule["phase"] == "read_request" and match["payload"]:
@@ -88,8 +89,10 @@ def validate(raw):
         if not isinstance(patches, list) or len(patches) > 64:
             raise ConfigError(f"{p}.patches: 最大64件です")
         if rule["action"] == "modify":
-            if not patches or rule["phase"] == "read_request":
-                raise ConfigError(f"{p}: modifyにはWRITE/READ応答とpatchesが必要です")
+            if not patches and "destination" not in rule:
+                raise ConfigError(f"{p}: modifyにはアドレスまたはデータの書き換えが必要です")
+            if patches and rule["phase"] == "read_request":
+                raise ConfigError(f"{p}: READ開始前にはデータを書き換えられません")
         elif patches:
             raise ConfigError(f"{p}: patchesはmodifyでのみ指定できます")
         offsets = set()
@@ -135,4 +138,4 @@ def dumps(cfg):
 
 def default_config():
     return {"version": 1, "bus": {"speed_hz": 100000, "stretch_timeout_us": 25000,
-            "max_write_bytes": 256, "addresses": [0x50], "read_block_fill": 255}, "rules": []}
+            "max_write_bytes": 256, "read_block_fill": 255}, "rules": []}

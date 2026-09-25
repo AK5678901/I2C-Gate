@@ -7,7 +7,7 @@
 #define GATE_TERMS 64
 #define GATE_BYTES 4096
 enum { PH_WRITE, PH_READ_REQUEST, PH_READ_RESPONSE };
-enum { ACT_PASS, ACT_MODIFY, ACT_BLOCK };
+enum { ACT_MODIFY = 1, ACT_BLOCK = 2 };
 typedef struct { uint16_t offset; uint8_t value, mask; } term_t;
 typedef struct {
     uint8_t enabled, phase, action, address, destination, predicates, patches;
@@ -20,6 +20,7 @@ typedef struct {
     bool address[128];
     rule_t rules[GATE_RULES];
 } config_t;
+void config_default(config_t *out);
 bool config_decode(config_t *out, const uint8_t *data, size_t size);
 const rule_t *filter_match(const config_t *cfg, unsigned phase, uint8_t address,
                           const uint8_t *data, size_t count, bool streaming);

@@ -5,6 +5,15 @@ static uint16_t u16(const uint8_t *p) { return p[0] | (uint16_t)p[1] << 8; }
 static uint32_t u32(const uint8_t *p) { return u16(p) | (uint32_t)u16(p + 2) << 16; }
 static bool address_ok(unsigned a) { return a >= 8 && a <= 0x77; }
 
+void config_default(config_t *out) {
+    memset(out, 0, sizeof(*out));
+    out->speed = 100000;
+    out->timeout = 25000;
+    out->max_write = 256;
+    out->fill = 255;
+    for (unsigned a = 8; a <= 0x77; ++a) out->address[a] = true;
+}
+
 bool config_decode(config_t *out, const uint8_t *data, size_t size) {
     if (size < 14 || data[0] != 1) return false;
     memset(out, 0, sizeof(*out));
@@ -20,17 +29,20 @@ bool config_decode(config_t *out, const uint8_t *data, size_t size) {
         if (!address_ok(a) || out->address[a]) return false;
         out->address[a] = true;
     }
+    // The v1 list is validated for compatibility, but no longer acts as an allowlist.
+    for (unsigned a = 8; a <= 0x77; ++a) out->address[a] = true;
     for (unsigned i = 0; i < out->rule_count; ++i) {
         if (size - pos < 7) return false;
         rule_t *r = &out->rules[i];
         r->enabled = data[pos++]; r->phase = data[pos++]; r->action = data[pos++];
         r->address = data[pos++]; r->destination = data[pos++];
         r->predicates = data[pos++]; r->patches = data[pos++];
-        if (r->enabled > 1 || r->phase > 2 || r->action > 2 || r->predicates > GATE_TERMS || r->patches > GATE_TERMS ||
+        if (r->enabled > 1 || r->phase > 2 || (r->action != ACT_MODIFY && r->action != ACT_BLOCK) || r->predicates > GATE_TERMS || r->patches > GATE_TERMS ||
             (r->address != 255 && (!address_ok(r->address) || !out->address[r->address])) ||
             (r->destination != 255 && (!address_ok(r->destination) || r->phase == PH_READ_RESPONSE || r->action == ACT_BLOCK)) ||
-            (r->phase == PH_READ_REQUEST && (r->predicates || r->action == ACT_MODIFY)) ||
-            ((r->action == ACT_MODIFY) != (r->patches != 0))) return false;
+            (r->phase == PH_READ_REQUEST && (r->predicates || r->patches)) ||
+            (r->action == ACT_MODIFY && !r->patches && r->destination == 255) ||
+            (r->action == ACT_BLOCK && r->patches)) return false;
         unsigned max_pred = 0, min_patch = GATE_BYTES;
         for (unsigned j = 0; j < (unsigned)r->predicates + r->patches; ++j) {
             if (size - pos < 4) return false;

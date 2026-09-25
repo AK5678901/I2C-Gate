@@ -31,9 +31,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build_pico.ps1
 
 `build/pico/i2c_gate.uf2` をBOOTSELモードのPicoへコピーします。
 
-疑似デバイスは起動直後から7 bitアドレス **0x50** で応答します。バス上のアドレスバイトはWRITEが `0xA0`、READが `0xA1` です。フィルタは従来どおり、USB設定を受信するまでは上流アドレスに応答しません。
+疑似デバイスは起動直後から7 bitアドレス **0x50** で応答します。バス上のアドレスバイトはWRITEが `0xA0`、READが `0xA1` です。フィルタも起動直後から全対応アドレスをルールなしで中継するので、USB設定なしで `0x50` のスタブを利用できます。
 
-フィルタ経由で試すには、GUIで `examples/stub-echo.json` を読み込んでUSB送信してください。アドレス `0x50`、下流100 kHz、ルールなしのパススルーになります。通常の `examples/filters.json` にはREAD先を `0x51` へ変更するルールがあり、そのままではこのスタブのREADは成功しません。スタブ自身のアドレスは `firmware/i2c_echo_stub.h` の `ECHO_STUB_ADDRESS` で固定しており、USB設定では変更されません。フィルタ設定を送信し直してもスタブのFIFOは消去しません。
+フィルタ経由では、起動時の既定設定で試せます。設定済みルールを解除するには、GUIで `examples/stub-echo.json` を読み込んでUSB送信してください。全対応アドレス、下流100 kHz、ルールなしのパススルーになります。通常の `examples/filters.json` にはREAD先を `0x51` へ変更するルールがあり、そのままではこのスタブのREADは成功しません。スタブ自身のアドレスは `firmware/i2c_echo_stub.h` の `ECHO_STUB_ADDRESS` で固定しており、USB設定では変更されません。フィルタ設定を送信し直してもスタブのFIFOは消去しません。
 
 スタブ単体を試す場合はGP2–GP4、GP3–GP5のジャンパを外し、外部ホストをGP4/GP5に直接接続してください。この場合、フィルタのUSB設定は不要です。フィルタ下流と外部ホストを同時に同じバスへ接続しないでください。
 

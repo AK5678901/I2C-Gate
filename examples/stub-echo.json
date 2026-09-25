@@ -4,7 +4,6 @@
     "speed_hz": 100000,
     "stretch_timeout_us": 25000,
     "max_write_bytes": 256,
-    "addresses": ["0x50"],
     "read_block_fill": "0xFF"
   },
   "rules": []

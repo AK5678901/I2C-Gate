@@ -320,9 +320,6 @@ void bridge_init(void) {
         gpio_init(pins[i]); gpio_put(pins[i], 0); gpio_set_dir(pins[i], GPIO_IN);
         gpio_disable_pulls(pins[i]);
     }
-    gate_configs[0].speed = 100000;
-    gate_configs[0].timeout = 25000;
-    gate_configs[0].max_write = 256;
-    gate_configs[0].fill = 255;
-    // No upstream address ACKs until a valid USB configuration is applied.
+    // Forward by default, including before the first USB configuration arrives.
+    config_default(&gate_configs[0]);
 }

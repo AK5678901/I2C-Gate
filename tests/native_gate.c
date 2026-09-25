@@ -6,12 +6,14 @@
 #define EXPORT
 #endif
 static config_t config;
+EXPORT void reset_config(void) { config_default(&config); }
+EXPORT int accepts_address(unsigned address) { return address < 128 && config.address[address]; }
 EXPORT int decode(const uint8_t *data, size_t size) { return config_decode(&config, data, size); }
 EXPORT int evaluate(unsigned phase, uint8_t address, const uint8_t *data, size_t count,
                     int streaming, size_t offset, uint8_t *output) {
     const rule_t *r = filter_match(&config, phase, address, data, count, streaming != 0);
     *output = filter_byte(r, offset, data[offset]);
-    return r ? r->action : ACT_PASS;
+    return r ? r->action : 0; // No matching rule.
 }
 EXPORT uint32_t crc(const uint8_t *data, size_t size) { return gate_crc32(data, size); }
 

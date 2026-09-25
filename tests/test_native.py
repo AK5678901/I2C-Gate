@@ -28,6 +28,21 @@ class NativeTests(unittest.TestCase):
         for value in (b"", b"123456789", bytes(range(256)), encode_config(default_config())):
             self.assertEqual(self.lib.crc(value, len(value)), zlib.crc32(value))
 
+    def test_address_only_modify_and_rejected_empty_or_pass_rules(self):
+        for phase in ("write", "read_request"):
+            cfg = default_config()
+            cfg["rules"] = [{"name": "redirect", "enabled": True, "phase": phase,
+                             "match": {"address": 0x52, "payload": []}, "action": "modify",
+                             "destination": 0x50}]
+            packet = bytearray(encode_config(cfg))
+            self.assertEqual(self.lib.decode(bytes(packet), len(packet)), 1)
+            rule_start = 14 + packet[12]
+            packet[rule_start + 2] = 0
+            self.assertEqual(self.lib.decode(bytes(packet), len(packet)), 0)
+            packet[rule_start + 2] = 1
+            packet[rule_start + 4] = 255
+            self.assertEqual(self.lib.decode(bytes(packet), len(packet)), 0)
+
     def test_truncated_frames_rejected(self):
         packet = encode_config(default_config())
         for size in range(len(packet)):
@@ -42,8 +57,31 @@ class NativeTests(unittest.TestCase):
                          "action": "modify", "patches": [{"offset": 1, "value": 0}]}]
         packet = bytearray(encode_config(cfg))
         self.assertEqual(self.lib.decode(bytes(packet), len(packet)), 1)
-        packet[22] = 2  # First predicate offset; header (14), address (1), rule header (7).
+        packet[14 + packet[12] + 7] = 2  # Header, address list, rule header.
         self.assertEqual(self.lib.decode(bytes(packet), len(packet)), 0)
+
+    def test_boot_defaults_pass_all_supported_addresses(self):
+        self.lib.reset_config()
+        for address in range(128):
+            self.assertEqual(bool(self.lib.accepts_address(address)), 0x08 <= address <= 0x77)
+        output = ctypes.c_uint8()
+        self.assertEqual(self.lib.evaluate(0, 0x52, b"x", 1, 0, 0, ctypes.byref(output)), 0)
+        self.assertEqual(output.value, ord("x"))
+
+    def test_legacy_packet_list_no_longer_limits_forwarding(self):
+        cfg = default_config()
+        cfg["rules"] = [{"name": "block", "enabled": True, "phase": "write",
+                         "match": {"address": 0x52, "payload": []}, "action": "block"}]
+        packet = bytearray(encode_config(cfg))
+        end = 14 + packet[12]
+        packet[12] = 1
+        packet[14:end] = b"\x50"
+        self.assertEqual(self.lib.decode(bytes(packet), len(packet)), 1)
+        for address in range(0x08, 0x78):
+            self.assertEqual(self.lib.accepts_address(address), 1)
+        output = ctypes.c_uint8()
+        self.assertEqual(self.lib.evaluate(0, 0x52, b"x", 1, 0, 0, ctypes.byref(output)), 2)
+        self.assertEqual(self.lib.evaluate(0, 0x53, b"x", 1, 0, 0, ctypes.byref(output)), 0)
 
     def test_randomized_desktop_firmware_parity(self):
         rng = random.Random(402)
@@ -52,7 +90,7 @@ class NativeTests(unittest.TestCase):
             direction = rng.choice(("read", "write"))
             payload = bytes(rng.randrange(8) for _ in range(rng.randrange(1, 9)))
             for index in range(6):
-                action = rng.choice(("pass", "modify", "block"))
+                action = rng.choice(("modify", "block"))
                 pred_offset = rng.randrange(len(payload))
                 cfg["rules"].append({
                     "name": str(index), "enabled": rng.choice((True, True, False)),
