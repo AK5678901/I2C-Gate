@@ -11,6 +11,8 @@ extern volatile int gate_active_config;
 extern volatile int gate_pending_config;
 extern volatile uint32_t gate_faults;
 void bridge_init(void);
+// Register before launching core 1. NULL selects the built-in filter callback.
+void bridge_set_callbacks(address_callback_t address, data_callback_t data);
 void bridge_core1(void);
 void bridge_service(void);
 #endif

@@ -10,7 +10,8 @@ MAX_BINARY = 65536
 def encode_config(raw):
     cfg = validate(raw)
     bus = cfg["bus"]
-    result = bytearray(struct.pack("<BIIHBBB", 1, bus["speed_hz"], bus["stretch_timeout_us"],
+    version = 2 if any("ack" in r or "write" in r["match"] for r in cfg["rules"]) else 1
+    result = bytearray(struct.pack("<BIIHBBB", version, bus["speed_hz"], bus["stretch_timeout_us"],
                                    bus["max_write_bytes"], bus["read_block_fill"],
                                    112, len(cfg["rules"])))
     # Keep the v1 wire layout, enabling every supported address on older firmware too.
@@ -22,8 +23,17 @@ def encode_config(raw):
             {"modify": 1, "block": 2}[rule["action"]],
             255 if rule["match"]["address"] == "*" else rule["match"]["address"],
             rule.get("destination", 255), len(rule["match"]["payload"]), len(rule["patches"])))
+        previous = rule["match"].get("write")
+        if version == 2:
+            result.extend(( ("host", "ack", "nack").index(rule.get("ack", "host")),
+                            int(previous is not None),
+                            255 if previous is None or previous["address"] == "*" else previous["address"],
+                            len(previous["payload"]) if previous is not None else 0))
         for item in rule["match"]["payload"] + rule["patches"]:
             result.extend(struct.pack("<HBB", item["offset"], item["value"], item["mask"]))
+        if previous is not None:
+            for item in previous["payload"]:
+                result.extend(struct.pack("<HBB", item["offset"], item["value"], item["mask"]))
     if len(result) > MAX_BINARY:
         raise ValueError("USB設定データが上限を超えています")
     return bytes(result)

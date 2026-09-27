@@ -2,6 +2,7 @@ from pathlib import Path
 import json
 import tkinter as tk
 import unittest
+from unittest.mock import patch
 
 from i2c_gate.config import loads
 from i2c_gate.gui import App, RuleDialog
@@ -61,10 +62,11 @@ class GuiTests(unittest.TestCase):
         dialog.predicates.insert("1.0", json.dumps([
             {"target": "address", "value": "0x50"},
             {"target": "data", "offset": 0, "value": "0x10"}]))
-        dialog.apply()
-        cfg = dialog.result
-        self.assertEqual(simulate(cfg, "write", 0x50, b"\x10").destination, 0x52)
-        self.assertEqual(simulate(cfg, "write", 0x50, b"\x20").destination, 0x50)
+        with patch("i2c_gate.gui.messagebox.showerror") as error:
+            dialog.apply()
+            error.assert_called_once()
+        self.assertIsNone(dialog.result)
+        dialog.destroy()
 
     def test_read_request_address_condition(self):
         dialog = RuleDialog(self.app, default_config())
@@ -107,3 +109,24 @@ class GuiTests(unittest.TestCase):
         self.assertIn("modify", output)
         self.app.changed()
         self.assertIn("再度検証", self.app.output.get("1.0", "end"))
+
+    def test_read_context_and_ack_round_trip(self):
+        dialog = RuleDialog(self.app, default_config())
+        dialog.withdraw()
+        dialog.fields["phase"].set("read_response")
+        dialog.ack.set("nack")
+        dialog.write_context.insert("1.0", '{"address":"0x50","payload":[{"offset":0,"value":16}]}')
+        dialog.apply()
+        cfg = dialog.result
+        self.assertEqual(cfg["rules"][0]["ack"], "nack")
+        dialog = RuleDialog(self.app, cfg, 0)
+        dialog.withdraw()
+        dialog.apply()
+        self.assertEqual(dialog.result, cfg)
+        self.app.cfg = cfg
+        self.app.direction.set("read")
+        self.app.with_write.set(True)
+        self.app.run_simulation()
+        output = self.app.output.get("1.0", "end")
+        self.assertIn("10 FF FF", output)
+        self.assertIn("NACK", output)

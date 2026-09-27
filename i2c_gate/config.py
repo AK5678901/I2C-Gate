@@ -57,7 +57,7 @@ def validate(raw):
     names = set()
     for i, rule in enumerate(cfg["rules"]):
         p = f"rules[{i}]"
-        obj(rule, ("name", "enabled", "phase", "match", "action"), ("destination", "patches"), p)
+        obj(rule, ("name", "enabled", "phase", "match", "action"), ("destination", "patches", "ack"), p)
         if not isinstance(rule["name"], str) or not 1 <= len(rule["name"].strip()) <= 80:
             raise ConfigError(f"{p}.name: 1〜80文字の名前が必要です")
         if rule["name"] in names:
@@ -68,7 +68,24 @@ def validate(raw):
         if rule["phase"] not in PHASES or rule["action"] not in ACTIONS:
             raise ConfigError(f"{p}: phaseまたはactionが不正です")
         match = rule["match"]
-        obj(match, ("address", "payload"), (), f"{p}.match")
+        obj(match, ("address", "payload"), ("write",), f"{p}.match")
+        if "ack" in rule:
+            if rule["ack"] not in ("host", "ack", "nack") or rule["phase"] != "read_response":
+                raise ConfigError(f"{p}.ack: read_responseでhost/ack/nackを指定してください")
+        if "write" in match:
+            if rule["phase"] == "write":
+                raise ConfigError(f"{p}: writeコンテキスト条件はREADで指定してください")
+            previous = match["write"]
+            obj(previous, ("address", "payload"), (), f"{p}.match.write")
+            if previous["address"] != "*":
+                previous["address"] = number(previous["address"], 0x08, 0x77, p + ".match.write.address")
+            if not isinstance(previous["payload"], list) or len(previous["payload"]) > 64:
+                raise ConfigError(f"{p}.match.write.payload: 最大64条件です")
+            for term in previous["payload"]:
+                obj(term, ("offset", "value"), ("mask",), p + ".match.write.payload")
+                term["offset"] = number(term["offset"], 0, MAX_PAYLOAD - 1, p + ".offset")
+                term["value"] = number(term["value"], 0, 255, p + ".value")
+                term["mask"] = number(term.get("mask", 255), 0, 255, p + ".mask")
         if match["address"] != "*":
             match["address"] = number(match["address"], 0x08, 0x77, f"{p}.match.address")
         if not isinstance(match["payload"], list) or len(match["payload"]) > 64:
@@ -85,11 +102,13 @@ def validate(raw):
             rule["destination"] = number(rule["destination"], 0x08, 0x77, p + ".destination")
             if rule["phase"] == "read_response" or rule["action"] == "block":
                 raise ConfigError(f"{p}: READ応答後／遮断時には宛先変更を指定できません")
+            if rule["phase"] == "write" and match["payload"]:
+                raise ConfigError(f"{p}: アドレス送信後のWRITEデータで宛先を変更できません")
         patches = rule.setdefault("patches", [])
         if not isinstance(patches, list) or len(patches) > 64:
             raise ConfigError(f"{p}.patches: 最大64件です")
         if rule["action"] == "modify":
-            if not patches and "destination" not in rule:
+            if not patches and "destination" not in rule and rule.get("ack", "host") == "host":
                 raise ConfigError(f"{p}: modifyにはアドレスまたはデータの書き換えが必要です")
             if patches and rule["phase"] == "read_request":
                 raise ConfigError(f"{p}: READ開始前にはデータを書き換えられません")
@@ -105,9 +124,9 @@ def validate(raw):
             if patch["offset"] in offsets:
                 raise ConfigError(f"{q}: 同一位置への重複した書き換えです")
             offsets.add(patch["offset"])
-        if rule["phase"] == "read_response" and patches and match["payload"]:
+        if patches and match["payload"]:
             if max(p["offset"] for p in match["payload"]) > min(p["offset"] for p in patches):
-                raise ConfigError(f"{p}: READでは後続バイトを条件に先行バイトを書き換えられません")
+                raise ConfigError(f"{p}: 後続バイトを条件に先行バイトを書き換えられません")
     return cfg
 
 

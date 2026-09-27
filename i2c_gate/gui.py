@@ -11,7 +11,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from .config import ACTIONS, PHASES, ConfigError, default_config, dumps, loads, number, validate
 from .conditions import from_match, to_match, from_changes, to_changes
-from .engine import simulate
+from .engine import simulate, simulate_combined
 from .wire import upload
 
 
@@ -77,7 +77,7 @@ class RuleDialog(tk.Toplevel):
         self.predicates.insert("1.0", json.dumps(from_match(item["match"]), indent=2))
         ttk.Label(box, text='target: address = 上流I2Cアドレス（7ビット）、data = データ\n'
                             'アドレス条件なし／valueが"*"なら全アドレス（0x08〜0x77）。[]は条件なし。\n'
-                            '下流宛先への変更も、すべての一致条件が成立したときに適用します。').grid(
+                            'WRITEのアドレス変更にはデータ条件を指定できません。').grid(
                                 row=9, column=0, columnspan=2, sticky="w", pady=5)
         ttk.Label(box, text="書き換え内容（I2Cアドレス・データ／JSON配列）").grid(row=10, column=0, columnspan=2, sticky="w", pady=(8, 0))
         change_buttons = ttk.Frame(box)
@@ -90,11 +90,22 @@ class RuleDialog(tk.Toplevel):
         self.patches.grid(row=12, column=0, columnspan=2, sticky="nsew")
         self.patches.insert("1.0", json.dumps(from_changes(item), indent=2))
         ttk.Label(box, text='address: valueが下流宛先（7ビット）。省略すると元のアドレスを維持。\n'
-                            'アドレス・データの変更はmodify。blockは[]。\n'
+                            '変更またはACK指定はmodify。blockは[]。\n'
                             'アドレス変更はwrite/read_requestのみ。offsetはデータの0バイト目から。').grid(
                                 row=13, column=0, columnspan=2, sticky="w", pady=8)
+        ttk.Label(box, text="READ応答ACK（host: ホストに追従）").grid(row=14, column=0, sticky="w")
+        self.ack = tk.StringVar(value=item.get("ack", "host"))
+        ttk.Combobox(box, textvariable=self.ack, values=("host", "ack", "nack"),
+                     state="readonly").grid(row=14, column=1, sticky="ew")
+        ttk.Label(box, text='先行WRITE条件（READのみ。空欄: 条件なし）\n'
+                            '{"address":"0x50","payload":[{"offset":0,"value":"0x10"}]}').grid(
+                                row=15, column=0, columnspan=2, sticky="w")
+        self.write_context = tk.Text(box, height=3, width=66)
+        self.write_context.grid(row=16, column=0, columnspan=2, sticky="ew")
+        if "write" in item["match"]:
+            self.write_context.insert("1.0", json.dumps(item["match"]["write"]))
         buttons = ttk.Frame(box)
-        buttons.grid(row=14, column=0, columnspan=2, sticky="e")
+        buttons.grid(row=17, column=0, columnspan=2, sticky="e")
         ttk.Button(buttons, text="キャンセル", command=self.destroy).pack(side="left", padx=4)
         ttk.Button(buttons, text="適用", command=self.apply).pack(side="left")
         self.bind("<Escape>", lambda _: self.destroy())
@@ -137,6 +148,11 @@ class RuleDialog(tk.Toplevel):
             rule = {"name": fields["name"], "enabled": self.enabled.get(), "phase": fields["phase"],
                     "match": to_match(json.loads(self.predicates.get("1.0", "end"))),
                     "action": fields["action"], **to_changes(json.loads(self.patches.get("1.0", "end")))}
+            if fields["phase"] == "read_response" or self.ack.get() != "host":
+                rule["ack"] = self.ack.get()
+            previous = self.write_context.get("1.0", "end").strip()
+            if previous:
+                rule["match"]["write"] = json.loads(previous)
             candidate = copy.deepcopy(self.config_data)
             if self.index is None:
                 candidate["rules"].append(rule)
@@ -225,7 +241,7 @@ class App(tk.Tk):
         self.detail = tk.Text(rules_tab, height=8, wrap="word", state="disabled")
         self.detail.pack(fill="x")
         ttk.Label(test_tab, text="実際のI2C通信は行いません。READでは、デバイスが返す想定データを入力してください。\n"
-                                "READは各バイト時点の受信済みデータで判定します。ACKや400 kHzのタイミングは実機検証が必要です。",
+                                "各バイト時点の受信済みデータで判定します。ACKや400 kHzのタイミングは実機検証が必要です。",
                   wraplength=900).pack(anchor="w", pady=(0, 15))
         row = ttk.Frame(test_tab)
         row.pack(fill="x")
@@ -239,6 +255,15 @@ class App(tk.Tk):
         self.data_input = tk.Text(test_tab, height=5, wrap="word")
         self.data_input.pack(fill="x")
         self.data_input.insert("1.0", "10 AA 55")
+        previous_row = ttk.Frame(test_tab)
+        previous_row.pack(fill="x", pady=8)
+        self.with_write = tk.BooleanVar(value=False)
+        ttk.Checkbutton(previous_row, text="READ前にWRITE → repeated START", variable=self.with_write).pack(side="left")
+        self.write_address = tk.StringVar(value="0x50")
+        self.write_bytes = tk.StringVar(value="10")
+        ttk.Entry(previous_row, textvariable=self.write_address, width=8).pack(side="left", padx=5)
+        ttk.Label(previous_row, text="WRITEデータ（16進）").pack(side="left")
+        ttk.Entry(previous_row, textvariable=self.write_bytes, width=24).pack(side="left", padx=5)
         ttk.Button(test_tab, text="現在のルールで検証", command=self.run_simulation).pack(anchor="w", pady=12)
         self.output = tk.Text(test_tab, height=12, state="disabled", wrap="word")
         self.output.pack(fill="both", expand=True)
@@ -406,9 +431,17 @@ class App(tk.Tk):
         try:
             address = number(self.address.get().strip(), 0x08, 0x77, "address")
             data = bytes.fromhex(self.data_input.get("1.0", "end").strip())
-            result = simulate(self.cfg, self.direction.get(), address, data)
+            if self.direction.get() == "read" and self.with_write.get():
+                _, result = simulate_combined(self.cfg, self.write_address.get().strip(),
+                                              bytes.fromhex(self.write_bytes.get()), address, data)
+            else:
+                result = simulate(self.cfg, self.direction.get(), address, data)
             text = f'動作: {result.action or "変更なし（既定動作）"}\n一致ルール: {" → ".join(result.rules) or "なし（既定動作）"}\n'
             text += f'下流宛先: 0x{result.destination:02X}\n下流アクセス: {"あり" if result.downstream_access else "なし"}\n'
+            if result.nack_offset is not None:
+                text += f'ホストへNACK: {"アドレス" if result.nack_offset == -1 else f"データ[{result.nack_offset}]"}\n'
+            if result.device_acks:
+                text += '下流への応答: ' + ' '.join('ACK' if a else 'NACK' for a in result.device_acks) + '\n'
             text += f'出力 ({len(result.payload)} B): {result.payload.hex(" ").upper() or "（なし）"}\n\n{result.explanation}'
             self.set_text(self.output, text)
         except ValueError as error:

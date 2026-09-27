@@ -16,6 +16,21 @@ EXPORT int evaluate(unsigned phase, uint8_t address, const uint8_t *data, size_t
     return r ? r->action : 0; // No matching rule.
 }
 EXPORT uint32_t crc(const uint8_t *data, size_t size) { return gate_crc32(data, size); }
+static write_context_t previous;
+EXPORT void set_write_context(int valid, uint8_t address, const uint8_t *data, size_t count) {
+    previous = (write_context_t){valid != 0, address, data, count};
+}
+EXPORT int address_callback(int read, uint8_t address, uint8_t *destination) {
+    address_result_t r = filter_address(&config, address, read != 0, &previous);
+    *destination = r.destination;
+    return r.block;
+}
+EXPORT int data_callback(int read, uint8_t address, const uint8_t *data, size_t count,
+                         uint8_t *output, uint8_t *ack) {
+    data_result_t r = filter_data(&config, address, read != 0, data, count, &previous);
+    *output = r.value; *ack = (uint8_t)r.ack;
+    return r.block ? ACT_BLOCK : r.modify ? ACT_MODIFY : 0;
+}
 
 static echo_fifo_t echo;
 EXPORT void echo_reset(void) { echo_fifo_init(&echo); }

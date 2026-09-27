@@ -106,13 +106,13 @@ class NativeTests(unittest.TestCase):
             blocked = False
             for offset, value in enumerate(payload):
                 output = ctypes.c_uint8()
-                count = offset + 1 if direction == "read" else len(payload)
+                count = offset + 1
                 action = self.lib.evaluate(2 if direction == "read" else 0, 0x50,
-                                          payload, count, direction == "read", offset, ctypes.byref(output))
+                                          payload, count, True, offset, ctypes.byref(output))
                 blocked = blocked or action == 2
+                if blocked and direction == "write":
+                    break
                 actual.append(255 if blocked and direction == "read" else output.value)
-            if blocked and direction == "write":
-                actual = bytearray()
             with self.subTest(trial=trial):
                 self.assertEqual(bytes(actual), expected.payload)
 

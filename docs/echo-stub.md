@@ -47,7 +47,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build_pico.ps1
 - デバッガで `echo_fifo.count`、`echo_fifo.underflows`、`echo_fifo.overflows` を確認できます。これらはスタブの割り込み内だけで更新します。
 - フィルタの初期WRITE上限は1トランザクション256バイトです。FIFO容量とは別です。容量試験では短いWRITEを複数回行うか、GUI設定で上限を変更してください。
 
-フィルタのWRITE変更は保存する値に、READ応答変更はホストへ返す値に反映されます。WRITEを遮断すればスタブへ届きません。READ応答の置換・遮断では、既存のフィルタ仕様どおり下流READとFIFO消費は発生します。
+フィルタのWRITE変更は保存する値に、READ応答変更はホストへ返す値に反映されます。WRITEの遮断バイト以降はスタブへ届きませんが、先行バイトはすでに保存されています。READ応答の置換・遮断では、既存のフィルタ仕様どおり下流READとFIFO消費は発生します。
 
 ## 外部ホストで確認する手順
 
@@ -62,7 +62,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build_pico.ps1
 | WRITE `55 66`、Repeated START、READ 3バイト | `55 66 FF` |
 | WRITE `00 FF`、STOP、WRITE `7E`、STOP、READ 4バイト | `00 FF 7E FF` |
 
-WRITEが下流へ転送されるのは上流のSTOPまたはRepeated START後です。上流WRITEのACKだけでは、下流スタブまで届いた確認にはなりません。配線確認にはFIFOが空の状態から `0xFF` 以外を書き込み、読み返してください。`0xFF` だけのREADは、配線不良や下流エラー時のフィルタ代替値と区別できません。
+WRITEは各バイトの受信直後に下流へ転送され、下流のACK/NACKが上流へ中継されます。遮断バイトにはNACKを返し、そのバイトを下流へ送りません。配線確認にはFIFOが空の状態から `0xFF` 以外を書き込み、読み返してください。`0xFF` だけのREADは、配線不良や下流エラー時のフィルタ代替値と区別できません。
 
 ロジックアナライザでGP0/GP1とGP2/GP3を同時に観測すれば、フィルタの前後を比較できます。GP4/GP5はジャンパ接続によりGP2/GP3と同じ下流バスです。
 

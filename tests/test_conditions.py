@@ -11,7 +11,7 @@ class ConditionsTests(unittest.TestCase):
             cfg["rules"] = [{"name": "round trip", "enabled": True, "phase": "write",
                              "match": {"address": address, "payload": [
                                  {"offset": 2, "value": 0xA0, "mask": 0xF0}]},
-                             "action": "modify", "destination": 0x52}]
+                             "action": "modify", "patches": [{"offset": 2, "value": 0x52}]}]
             original = validate(cfg)
             cfg["rules"][0]["match"] = to_match(from_match(original["rules"][0]["match"]))
             self.assertEqual(validate(cfg), original)

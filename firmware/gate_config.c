@@ -15,7 +15,8 @@ void config_default(config_t *out) {
 }
 
 bool config_decode(config_t *out, const uint8_t *data, size_t size) {
-    if (size < 14 || data[0] != 1) return false;
+    if (size < 14 || (data[0] != 1 && data[0] != 2)) return false;
+    bool v2 = data[0] == 2;
     memset(out, 0, sizeof(*out));
     out->speed = u32(data + 1); out->timeout = u32(data + 5);
     out->max_write = u16(data + 9); out->fill = data[11];
@@ -37,11 +38,23 @@ bool config_decode(config_t *out, const uint8_t *data, size_t size) {
         r->enabled = data[pos++]; r->phase = data[pos++]; r->action = data[pos++];
         r->address = data[pos++]; r->destination = data[pos++];
         r->predicates = data[pos++]; r->patches = data[pos++];
+        r->write_address = 255;
+        if (v2) {
+            if (size - pos < 4) return false;
+            r->ack = data[pos++]; r->has_write = data[pos++];
+            r->write_address = data[pos++]; r->write_predicates = data[pos++];
+        }
+        if (r->ack > NACK_FORCE || r->has_write > 1 || r->write_predicates > GATE_TERMS ||
+            (r->ack && r->phase != PH_READ_RESPONSE) ||
+            (r->has_write && r->phase == PH_WRITE) ||
+            (!r->has_write && (r->write_predicates || r->write_address != 255)) ||
+            (r->write_address != 255 && !address_ok(r->write_address))) return false;
         if (r->enabled > 1 || r->phase > 2 || (r->action != ACT_MODIFY && r->action != ACT_BLOCK) || r->predicates > GATE_TERMS || r->patches > GATE_TERMS ||
             (r->address != 255 && (!address_ok(r->address) || !out->address[r->address])) ||
             (r->destination != 255 && (!address_ok(r->destination) || r->phase == PH_READ_RESPONSE || r->action == ACT_BLOCK)) ||
             (r->phase == PH_READ_REQUEST && (r->predicates || r->patches)) ||
-            (r->action == ACT_MODIFY && !r->patches && r->destination == 255) ||
+            (r->action == ACT_MODIFY && !r->patches && r->destination == 255 && !r->ack) ||
+            (r->phase == PH_WRITE && r->destination != 255 && r->predicates) ||
             (r->action == ACT_BLOCK && r->patches)) return false;
         unsigned max_pred = 0, min_patch = GATE_BYTES;
         for (unsigned j = 0; j < (unsigned)r->predicates + r->patches; ++j) {
@@ -56,7 +69,13 @@ bool config_decode(config_t *out, const uint8_t *data, size_t size) {
                     if (r->patch[k].offset == t->offset) return false;
             }
         }
-        if (r->phase == PH_READ_RESPONSE && r->patches && max_pred > min_patch) return false;
+        if (r->patches && max_pred > min_patch) return false;
+        for (unsigned j = 0; j < r->write_predicates; ++j) {
+            if (size - pos < 4) return false;
+            term_t *t = &r->write_predicate[j];
+            t->offset = u16(data + pos); t->value = data[pos + 2]; t->mask = data[pos + 3]; pos += 4;
+            if (t->offset >= GATE_BYTES) return false;
+        }
     }
     return pos == size;
 }
@@ -84,6 +103,60 @@ uint8_t filter_byte(const rule_t *r, size_t offset, uint8_t value) {
         if (t->offset == offset) value = (value & (uint8_t)~t->mask) | (t->value & t->mask);
     }
     return value;
+}
+
+static const rule_t *callback_match(const config_t *cfg, unsigned phase, uint8_t address,
+                                    const uint8_t *data, size_t count,
+                                    const write_context_t *write, bool at_address) {
+    for (unsigned i = 0; i < cfg->rule_count; ++i) {
+        const rule_t *r = &cfg->rules[i];
+        if (!r->enabled || r->phase != phase || (r->address != 255 && r->address != address)) continue;
+        if (at_address && r->action != ACT_BLOCK && r->destination == 255) continue;
+        if (r->has_write) {
+            if (!write || !write->valid ||
+                (r->write_address != 255 && r->write_address != write->address)) continue;
+            bool match = true;
+            for (unsigned j = 0; j < r->write_predicates; ++j) {
+                const term_t *t = &r->write_predicate[j];
+                if (t->offset >= write->count ||
+                    (write->data[t->offset] & t->mask) != (t->value & t->mask)) { match = false; break; }
+            }
+            if (!match) continue;
+        }
+        bool match = true;
+        for (unsigned j = 0; j < r->predicates; ++j) {
+            const term_t *t = &r->predicate[j];
+            if (t->offset >= count || (data[t->offset] & t->mask) != (t->value & t->mask)) {
+                match = false; break;
+            }
+        }
+        if (match) return r;
+    }
+    return NULL;
+}
+
+address_result_t filter_address(const config_t *cfg, uint8_t address, bool read,
+                                 const write_context_t *write) {
+    const rule_t *r = callback_match(cfg, read ? PH_READ_REQUEST : PH_WRITE,
+                                    address, NULL, 0, write, true);
+    address_result_t result = {r && r->action == ACT_BLOCK,
+                               r && r->destination != 255 ? r->destination : address};
+    return result;
+}
+
+data_result_t filter_data(const config_t *cfg, uint8_t address, bool read,
+                          const uint8_t *data, size_t count, const write_context_t *write) {
+    data_result_t result = {false, false, count ? data[count - 1] : 0, ACK_HOST};
+    if (!count) return result;
+    const rule_t *r = callback_match(cfg, read ? PH_READ_RESPONSE : PH_WRITE,
+                                    address, data, count, write, false);
+    if (r) {
+        result.block = r->action == ACT_BLOCK;
+        result.modify = r->action == ACT_MODIFY;
+        result.value = filter_byte(r, count - 1, result.value);
+        result.ack = (ack_mode_t)r->ack;
+    }
+    return result;
 }
 
 uint32_t gate_crc32(const uint8_t *data, size_t count) {

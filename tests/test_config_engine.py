@@ -18,10 +18,11 @@ class FilterTests(unittest.TestCase):
         self.assertEqual(result.payload, bytes.fromhex("10 00 55"))
         self.assertTrue(result.downstream_access)
 
-    def test_write_block_does_not_forward_prefix(self):
+    def test_write_block_suppresses_matching_byte(self):
         result = simulate(self.cfg, "write", 0x50, bytes.fromhex("20 AA"))
         self.assertEqual(result.payload, b"")
-        self.assertFalse(result.downstream_access)
+        self.assertTrue(result.downstream_access)
+        self.assertEqual(result.nack_offset, 0)
 
     def test_read_mask_preserves_unmasked_bits(self):
         result = simulate(self.cfg, "read", 0x40, bytes.fromhex("EF 12"))
@@ -58,7 +59,9 @@ class FilterTests(unittest.TestCase):
 
     def test_write_limit_fails_closed(self):
         self.cfg["bus"]["max_write_bytes"] = 1
-        self.assertFalse(simulate(self.cfg, "write", 0x50, b"\x10\xaa").downstream_access)
+        result = simulate(self.cfg, "write", 0x50, b"\x10\xaa")
+        self.assertTrue(result.downstream_access)
+        self.assertEqual((result.payload, result.nack_offset), (b"\x10", 1))
 
     def test_unmatched_addresses_pass(self):
         for direction in ("read", "write"):

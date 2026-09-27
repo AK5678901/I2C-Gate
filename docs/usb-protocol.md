@@ -1,4 +1,4 @@
-# USB設定プロトコル v1
+# USB設定プロトコル（設定ペイロード v1 / v2）
 
 USB CDCシリアルを使用する。GUIの115200 bpsは仮想COMの設定値でありI2C速度ではない。
 
@@ -25,7 +25,7 @@ CRCはzlib互換CRC32（反転多項式0xEDB88320、初期値／最終XOR 0xFFFF
 
 | 項目 | 型 |
 | --- | --- |
-| version = 1 | uint8 |
+| version = 1 または 2 | uint8 |
 | speed_hz | uint32 LE |
 | stretch_timeout_us | uint32 LE |
 | max_write_bytes | uint16 LE |
@@ -35,15 +35,19 @@ CRCはzlib互換CRC32（反転多項式0xEDB88320、初期値／最終XOR 0xFFFF
 
 上流アドレスを各1バイトで並べ、次にルールを順に並べる。
 
-ルールヘッダは7バイト: enabled、phase、action、上流address、destination、条件数、書き換え数。
+v1のルールヘッダは7バイト: enabled、phase、action、上流address、destination、条件数、書き換え数。
 
 - phase: 0=write、1=read_request、2=read_response。
-- action: 0=pass、1=modify、2=block。
+- action: 1=modify、2=block（0=passは拒否）。
 - address=255は任意、destination=255は維持。
 - 条件をすべて、さらに書き換えをすべて並べる。各項目は `<HBB`（offset、value、mask）。
 - 名前はPCのJSONに保持し、Picoへ送信しない。
 
-未知のversion、範囲外、余分な末尾、READの時間的に不可能な書き換えを拒否する。不正設定を稼働中設定に反映しない。
+v2は上記7バイトの直後に4バイトを追加します: `ack`（0=host、1=ACK、2=NACK）、先行WRITE条件の有無（0/1）、先行WRITEアドレス（255=任意）、先行WRITE条件数。通常の条件と書き換えの後に、先行WRITE条件を同じ `<HBB` 形式で並べます。ACK指定はread_responseのみ、先行WRITE条件はread_request/read_responseのみです。先行WRITE条件なしの場合は有無=0、アドレス=255、条件数=0です。
+
+PCは `ack` または `match.write` を含む設定をv2で送信し、それ以外はv1で送信します。更新版ファームウェアは両方を受理し、いずれもバイト単位で実行します。旧ファームウェアはv2を拒否するため、利用前にUF2を更新してください。JSONのversionは引き続き1です。
+
+未知のversion、範囲外、余分な末尾、WRITE/READの時間的に不可能な書き換え、WRITEデータを条件にした宛先変更を拒否する。不正設定を稼働中設定に反映しない。
 
 ## エラーと再接続
 
