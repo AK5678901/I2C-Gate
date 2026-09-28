@@ -278,7 +278,7 @@ void bridge_core1(void) {
                         write_data[write.count++] = (uint8_t)value;
                         data_result_t decision = data_callback(cfg, address, false,
                                                                write_data, write.count, NULL);
-                        if (!decision.block)
+                        if (!decision.block && decision.ack != NACK_FORCE)
                             ack = execute(CMD_WRITE_BYTE, cfg, 0,
                                           decision.modify ? decision.value : (uint8_t)value) == 0;
                     }

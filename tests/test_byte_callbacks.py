@@ -19,6 +19,13 @@ def config(*rules):
 
 
 class ByteModelTests(unittest.TestCase):
+    def test_nack_position_rejects_late_conditions_and_unreachable_patches(self):
+        for r in (rule("write", "modify", ack="nack", nack_at=1, patches=[{"offset": 1, "value": 2}]),
+                  rule("read_response", "modify", [{"offset": 2, "value": 3}], ack="nack", nack_at=1),
+                  rule("read_response", "modify", ack="nack", nack_at=4096)):
+            with self.assertRaises(ConfigError):
+                validate(config(r))
+
     def test_write_block_keeps_sent_prefix(self):
         cfg = config(rule(payload=[{"offset": 1, "value": 2}]))
         result = simulate(cfg, "write", 0x50, b"\x01\x02\x03")
@@ -68,6 +75,61 @@ LIBRARY = Path(__file__).resolve().parents[1] / "build" / "gate_native.dll"
 
 @unittest.skipUnless(LIBRARY.exists(), "Run scripts/build_native.ps1")
 class BridgeTests(unittest.TestCase):
+    def test_previous_write_offset_independent_of_read_nack_position(self):
+        r = rule("read_response", "modify", ack="nack", nack_at=0)
+        r["match"]["write"] = {"address": 0x50, "payload": [{"offset": 3, "value": 16}]}
+        self.run_bus(config(r), [0xA0, 1, 2, 3, 16, -2, 0xA1, -1], reads=b"a", host=[1])
+        self.assertEqual(self.values(5), [97])
+        self.assertEqual(self.values(6), [1])
+
+    def test_decoder_rejects_conditions_and_patches_after_nack(self):
+        for phase, patch in (("write", True), ("read_response", True), ("read_response", False)):
+            r = rule(phase, "modify", ack="nack", nack_at=1,
+                     patches=[{"offset": 0, "value": 0}] if patch else [])
+            if not patch:
+                r["match"]["payload"] = [{"offset": 0, "value": 0}]
+            packet = bytearray(encode_config(config(r)))
+            term = 14 + packet[12] + 13
+            packet[term] = 1 if phase == "write" else 2
+            self.assertEqual(self.lib.bridge_test_config(bytes(packet), len(packet)), 0)
+
+    def test_and_or_operations_reach_actual_bridge(self):
+        patches = [{"offset": 0, "operation": "AND", "value": 0xF0},
+                   {"offset": 0, "operation": "OR", "value": 0x05}]
+        self.run_bus(config(rule("write", "modify", patches=patches)), [0xA0, 0xAB, -1])
+        self.assertEqual(self.values(3), [0xA0, 0xA5])
+        self.run_bus(config(rule("read_response", "modify", patches=patches)), [0xA1, -1], reads=bytes([0xAB]), host=[1])
+        self.assertEqual(self.values(5), [0xA5])
+        self.assertEqual(self.values(6), [1])
+
+    def test_write_nack_offset_with_earlier_modification(self):
+        cfg = config(rule("write", "modify", ack="nack", nack_at=2,
+                          patches=[{"offset": 0, "value": 90}]))
+        self.run_bus(cfg, [0xA0, 1, 2, 3, 4, -1])
+        self.assertEqual(self.values(3), [0xA0, 90, 2])
+        self.assertEqual(self.values(4), [1, 1, 1, 0, 0])
+        model = simulate(cfg, "write", 0x50, bytes([1, 2, 3, 4]))
+        self.assertEqual((model.payload, model.nack_offset), (bytes([90, 2]), 2))
+
+    def test_combined_read_nack_offset_with_modification(self):
+        r = rule("read_response", "modify", ack="nack", nack_at=1,
+                 patches=[{"offset": 0, "value": 90}])
+        r["match"]["write"] = {"address": 0x50, "payload": [{"offset": 0, "value": 16}]}
+        self.run_bus(config(r), [0xA0, 16, -2, 0xA1, -1], reads=b"abc", host=[0, 0, 1])
+        self.assertEqual(self.values(5), [90, 98, 255])
+        self.assertEqual(self.values(6), [0, 1])
+        self.assertEqual(self.values(9), [97, 98])
+
+    def test_v3_truncation_and_invalid_nack_position(self):
+        packet = encode_config(config(rule("write", "modify", ack="nack", nack_at=1)))
+        self.assertEqual(packet[0], 3)
+        for size in range(len(packet)):
+            self.assertEqual(self.lib.bridge_test_config(packet, size), 0)
+        bad = bytearray(packet)
+        offset = 14 + bad[12] + 11
+        bad[offset:offset + 2] = b"\x00\x10"
+        self.assertEqual(self.lib.bridge_test_config(bytes(bad), len(bad)), 0)
+
     @classmethod
     def setUpClass(cls):
         cls.lib = ctypes.CDLL(str(LIBRARY))

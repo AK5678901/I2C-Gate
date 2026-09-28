@@ -14,6 +14,7 @@ typedef struct {
     uint8_t enabled, phase, action, address, destination, predicates, patches;
     term_t predicate[GATE_TERMS], patch[GATE_TERMS];
     uint8_t ack, has_write, write_address, write_predicates;
+    uint16_t nack_at; // UINT16_MAX = NACK as soon as the rule matches.
     term_t write_predicate[GATE_TERMS];
 } rule_t;
 typedef struct {

@@ -2,6 +2,7 @@
 import struct
 import zlib
 from .config import validate
+from .patches import lower_patches
 
 MAGIC = b"I2CG"
 MAX_BINARY = 65536
@@ -11,25 +12,30 @@ def encode_config(raw):
     cfg = validate(raw)
     bus = cfg["bus"]
     version = 2 if any("ack" in r or "write" in r["match"] for r in cfg["rules"]) else 1
+    if any("nack_at" in r or (r["phase"] == "write" and "ack" in r) for r in cfg["rules"]):
+        version = 3
     result = bytearray(struct.pack("<BIIHBBB", version, bus["speed_hz"], bus["stretch_timeout_us"],
                                    bus["max_write_bytes"], bus["read_block_fill"],
                                    112, len(cfg["rules"])))
     # Keep the v1 wire layout, enabling every supported address on older firmware too.
     result.extend(range(0x08, 0x78))
     for rule in cfg["rules"]:
+        patches = lower_patches(rule["patches"])
         # Firmware uses rule indices for diagnostics; names stay in the JSON/GUI.
         result.extend(struct.pack("<BBBBBBB", int(rule["enabled"]),
             ("write", "read_request", "read_response").index(rule["phase"]),
             {"modify": 1, "block": 2}[rule["action"]],
             255 if rule["match"]["address"] == "*" else rule["match"]["address"],
-            rule.get("destination", 255), len(rule["match"]["payload"]), len(rule["patches"])))
+            rule.get("destination", 255), len(rule["match"]["payload"]), len(patches)))
         previous = rule["match"].get("write")
-        if version == 2:
+        if version >= 2:
             result.extend(( ("host", "ack", "nack").index(rule.get("ack", "host")),
                             int(previous is not None),
                             255 if previous is None or previous["address"] == "*" else previous["address"],
                             len(previous["payload"]) if previous is not None else 0))
-        for item in rule["match"]["payload"] + rule["patches"]:
+        if version >= 3:
+            result.extend(struct.pack("<H", rule.get("nack_at", 65535)))
+        for item in rule["match"]["payload"] + patches:
             result.extend(struct.pack("<HBB", item["offset"], item["value"], item["mask"]))
         if previous is not None:
             for item in previous["payload"]:

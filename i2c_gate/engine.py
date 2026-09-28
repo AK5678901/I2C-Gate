@@ -51,7 +51,12 @@ def _byte(rule, offset, value):
     if rule and rule["action"] == "modify":
         for patch in rule["patches"]:
             if patch["offset"] == offset:
-                value = (value & (255 ^ patch["mask"])) | (patch["value"] & patch["mask"])
+                if patch.get("operation") == "AND":
+                    value &= patch["value"]
+                elif patch.get("operation") == "OR":
+                    value |= patch["value"]
+                else:
+                    value = (value & (255 ^ patch["mask"])) | (patch["value"] & patch["mask"])
     return value
 
 
@@ -102,7 +107,7 @@ def simulate(raw_config, direction, address, data, *, write_context=None,
                         p["offset"] == offset for p in rule["patches"]):
                     overall = "modify"
         if direction == "write":
-            if blocked:
+            if blocked or (rule and rule.get("ack") == "nack" and offset >= rule.get("nack_at", 0)):
                 nack_offset = offset
                 break
             output.append(_byte(rule, offset, value))
@@ -114,6 +119,8 @@ def simulate(raw_config, direction, address, data, *, write_context=None,
             host_ack = host_acks[offset] if host_acks is not None else offset < len(data) - 1
             if not ended:
                 mode = rule.get("ack", "host") if rule else "host"
+                if rule and offset < rule.get("nack_at", 0):
+                    mode = "host"
                 device_ack = mode == "ack" or (mode == "host" and host_ack)
                 if offset + 1 == MAX_PAYLOAD:
                     device_ack = False

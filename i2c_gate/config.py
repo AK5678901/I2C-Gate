@@ -57,7 +57,7 @@ def validate(raw):
     names = set()
     for i, rule in enumerate(cfg["rules"]):
         p = f"rules[{i}]"
-        obj(rule, ("name", "enabled", "phase", "match", "action"), ("destination", "patches", "ack"), p)
+        obj(rule, ("name", "enabled", "phase", "match", "action"), ("destination", "patches", "ack", "nack_at"), p)
         if not isinstance(rule["name"], str) or not 1 <= len(rule["name"].strip()) <= 80:
             raise ConfigError(f"{p}.name: 1〜80文字の名前が必要です")
         if rule["name"] in names:
@@ -70,8 +70,13 @@ def validate(raw):
         match = rule["match"]
         obj(match, ("address", "payload"), ("write",), f"{p}.match")
         if "ack" in rule:
-            if rule["ack"] not in ("host", "ack", "nack") or rule["phase"] != "read_response":
-                raise ConfigError(f"{p}.ack: read_responseでhost/ack/nackを指定してください")
+            if (rule["ack"] not in ("host", "ack", "nack") or rule["phase"] == "read_request"
+                    or (rule["phase"] == "write" and rule["ack"] != "nack")):
+                raise ConfigError(f"{p}.ack: READデータはhost/ack/nack、WRITEデータはnackを指定してください")
+        if "nack_at" in rule:
+            rule["nack_at"] = number(rule["nack_at"], 0, MAX_PAYLOAD - 1, p + ".nack_at")
+            if rule.get("ack") != "nack" or rule["action"] != "modify":
+                raise ConfigError(f"{p}: NACK位置はmodifyのnack指定でのみ使用できます")
         if "write" in match:
             if rule["phase"] == "write":
                 raise ConfigError(f"{p}: writeコンテキスト条件はREADで指定してください")
@@ -98,6 +103,8 @@ def validate(raw):
             predicate["offset"] = number(predicate["offset"], 0, MAX_PAYLOAD - 1, q + ".offset")
             predicate["value"] = number(predicate["value"], 0, 255, q + ".value")
             predicate["mask"] = number(predicate.get("mask", 255), 0, 255, q + ".mask")
+        if "nack_at" in rule and any(t["offset"] > rule["nack_at"] for t in match["payload"]):
+            raise ConfigError(f"{p}: NACK位置より後のデータを一致条件にできません")
         if "destination" in rule:
             rule["destination"] = number(rule["destination"], 0x08, 0x77, p + ".destination")
             if rule["phase"] == "read_response" or rule["action"] == "block":
@@ -105,8 +112,8 @@ def validate(raw):
             if rule["phase"] == "write" and match["payload"]:
                 raise ConfigError(f"{p}: アドレス送信後のWRITEデータで宛先を変更できません")
         patches = rule.setdefault("patches", [])
-        if not isinstance(patches, list) or len(patches) > 64:
-            raise ConfigError(f"{p}.patches: 最大64件です")
+        if not isinstance(patches, list) or len(patches) > 128:
+            raise ConfigError(f"{p}.patches: 最大128演算です")
         if rule["action"] == "modify":
             if not patches and "destination" not in rule and rule.get("ack", "host") == "host":
                 raise ConfigError(f"{p}: modifyにはアドレスまたはデータの書き換えが必要です")
@@ -115,15 +122,27 @@ def validate(raw):
         elif patches:
             raise ConfigError(f"{p}: patchesはmodifyでのみ指定できます")
         offsets = set()
+        legacy_offsets = set()
         for j, patch in enumerate(patches):
             q = f"{p}.patches[{j}]"
-            obj(patch, ("offset", "value"), ("mask",), q)
+            obj(patch, ("offset", "value"), ("mask", "operation"), q)
             patch["offset"] = number(patch["offset"], 0, MAX_PAYLOAD - 1, q + ".offset")
             patch["value"] = number(patch["value"], 0, 255, q + ".value")
-            patch["mask"] = number(patch.get("mask", 255), 0, 255, q + ".mask")
-            if patch["offset"] in offsets:
+            if "operation" in patch:
+                if patch["operation"] not in ("AND", "OR") or "mask" in patch:
+                    raise ConfigError(f"{q}: 書き換えはAND/ORと設定値で指定してください（maskとの併用不可）")
+            else:
+                patch["mask"] = number(patch.get("mask", 255), 0, 255, q + ".mask")
+            if patch["offset"] in legacy_offsets or ("operation" not in patch and patch["offset"] in offsets):
                 raise ConfigError(f"{q}: 同一位置への重複した書き換えです")
+            if "operation" not in patch:
+                legacy_offsets.add(patch["offset"])
             offsets.add(patch["offset"])
+            if len(offsets) > 64:
+                raise ConfigError(f"{p}.patches: 変更するバイト位置は最大64か所です")
+            if "nack_at" in rule and (patch["offset"] > rule["nack_at"] or
+                    (rule["phase"] == "write" and patch["offset"] == rule["nack_at"])):
+                raise ConfigError(f"{p}: NACKで転送しないデータは書き換えられません")
         if patches and match["payload"]:
             if max(p["offset"] for p in match["payload"]) > min(p["offset"] for p in patches):
                 raise ConfigError(f"{p}: 後続バイトを条件に先行バイトを書き換えられません")

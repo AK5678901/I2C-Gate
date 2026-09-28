@@ -15,8 +15,8 @@ void config_default(config_t *out) {
 }
 
 bool config_decode(config_t *out, const uint8_t *data, size_t size) {
-    if (size < 14 || (data[0] != 1 && data[0] != 2)) return false;
-    bool v2 = data[0] == 2;
+    if (size < 14 || data[0] < 1 || data[0] > 3) return false;
+    bool v2 = data[0] >= 2;
     memset(out, 0, sizeof(*out));
     out->speed = u32(data + 1); out->timeout = u32(data + 5);
     out->max_write = u16(data + 9); out->fill = data[11];
@@ -39,13 +39,20 @@ bool config_decode(config_t *out, const uint8_t *data, size_t size) {
         r->address = data[pos++]; r->destination = data[pos++];
         r->predicates = data[pos++]; r->patches = data[pos++];
         r->write_address = 255;
+        r->nack_at = UINT16_MAX;
         if (v2) {
             if (size - pos < 4) return false;
             r->ack = data[pos++]; r->has_write = data[pos++];
             r->write_address = data[pos++]; r->write_predicates = data[pos++];
         }
+        if (data[0] >= 3) {
+            if (size - pos < 2) return false;
+            r->nack_at = u16(data + pos); pos += 2;
+        }
+        if (r->nack_at != UINT16_MAX && (r->nack_at >= GATE_BYTES ||
+            r->ack != NACK_FORCE || r->action != ACT_MODIFY)) return false;
         if (r->ack > NACK_FORCE || r->has_write > 1 || r->write_predicates > GATE_TERMS ||
-            (r->ack && r->phase != PH_READ_RESPONSE) ||
+            (r->ack && r->phase != PH_READ_RESPONSE && !(r->phase == PH_WRITE && r->ack == NACK_FORCE && data[0] >= 3)) ||
             (r->has_write && r->phase == PH_WRITE) ||
             (!r->has_write && (r->write_predicates || r->write_address != 255)) ||
             (r->write_address != 255 && !address_ok(r->write_address))) return false;
@@ -70,6 +77,12 @@ bool config_decode(config_t *out, const uint8_t *data, size_t size) {
             }
         }
         if (r->patches && max_pred > min_patch) return false;
+        if (r->nack_at != UINT16_MAX) {
+            if (r->predicates && max_pred > r->nack_at) return false;
+            for (unsigned j = 0; j < r->patches; ++j)
+                if (r->patch[j].offset > r->nack_at ||
+                    (r->phase == PH_WRITE && r->patch[j].offset == r->nack_at)) return false;
+        }
         for (unsigned j = 0; j < r->write_predicates; ++j) {
             if (size - pos < 4) return false;
             term_t *t = &r->write_predicate[j];
@@ -155,6 +168,7 @@ data_result_t filter_data(const config_t *cfg, uint8_t address, bool read,
         result.modify = r->action == ACT_MODIFY;
         result.value = filter_byte(r, count - 1, result.value);
         result.ack = (ack_mode_t)r->ack;
+        if (r->nack_at != UINT16_MAX && count - 1 < r->nack_at) result.ack = ACK_HOST;
     }
     return result;
 }

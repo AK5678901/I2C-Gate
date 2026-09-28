@@ -1,4 +1,4 @@
-# USB設定プロトコル（設定ペイロード v1 / v2）
+# USB設定プロトコル（設定ペイロード v1 / v2 / v3）
 
 USB CDCシリアルを使用する。GUIの115200 bpsは仮想COMの設定値でありI2C速度ではない。
 
@@ -25,7 +25,7 @@ CRCはzlib互換CRC32（反転多項式0xEDB88320、初期値／最終XOR 0xFFFF
 
 | 項目 | 型 |
 | --- | --- |
-| version = 1 または 2 | uint8 |
+| version = 1、2、3 | uint8 |
 | speed_hz | uint32 LE |
 | stretch_timeout_us | uint32 LE |
 | max_write_bytes | uint16 LE |
@@ -43,9 +43,13 @@ v1のルールヘッダは7バイト: enabled、phase、action、上流address�
 - 条件をすべて、さらに書き換えをすべて並べる。各項目は `<HBB`（offset、value、mask）。
 - 名前はPCのJSONに保持し、Picoへ送信しない。
 
+GUI/JSONの書き換えは `operation: AND/OR` と `value` で指定します。PC側で同じバイト位置の演算を上から順に合成し、既存の `<HBB>` 書き換え形式へ変換します。ANDの値をvとするとvalue=0・mask=~v（8ビット）、ORならvalue=v・mask=vです。複数演算も同じ位置につき1項目にまとめるため、Picoの既存のビット書き換え処理で同じ結果になります。今回の演算指定の追加ではUSB形式は変更しません。
+
 v2は上記7バイトの直後に4バイトを追加します: `ack`（0=host、1=ACK、2=NACK）、先行WRITE条件の有無（0/1）、先行WRITEアドレス（255=任意）、先行WRITE条件数。通常の条件と書き換えの後に、先行WRITE条件を同じ `<HBB` 形式で並べます。ACK指定はread_responseのみ、先行WRITE条件はread_request/read_responseのみです。先行WRITE条件なしの場合は有無=0、アドレス=255、条件数=0です。
 
-PCは `ack` または `match.write` を含む設定をv2で送信し、それ以外はv1で送信します。更新版ファームウェアは両方を受理し、いずれもバイト単位で実行します。旧ファームウェアはv2を拒否するため、利用前にUF2を更新してください。JSONのversionは引き続き1です。
+v3ではv2の11バイトのルールヘッダ直後に `nack_at`（uint16 LE）を追加します。0〜4095はNACKを開始するデータ位置（0始まり）、65535は位置指定なしです。位置指定は `modify` / `ack=nack` でのみ使用でき、現在の通信の条件位置はNACK位置以下に制限します。WRITEはその位置を下流へ送らず上流へNACK、READはその位置を受信後に下流へNACKします。先行WRITE条件はこの位置制限の対象外です。v3ではWRITEの `ack=nack` も受理します。自動ACKに戻す位置指定や強制ACK付きの位置指定は拒否します。
+
+PCは `nack_at` またはWRITEの `ack` を含む設定をv3で送信します。それ以外では `ack` または `match.write` を含む設定をv2、それ以外はv1で送信します。更新版ファームウェアは3形式を受理します。旧ファームウェアは新しい形式を拒否するため、利用前にUF2を更新してください。JSONのversionは引き続き1です。
 
 未知のversion、範囲外、余分な末尾、WRITE/READの時間的に不可能な書き換え、WRITEデータを条件にした宛先変更を拒否する。不正設定を稼働中設定に反映しない。
 

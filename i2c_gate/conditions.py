@@ -46,14 +46,14 @@ def to_changes(changes):
     result = {"patches": []}
     for index, change in enumerate(changes):
         path = f"書き換え内容[{index}]"
-        obj(change, ("target", "value"), ("offset", "mask"), path)
+        obj(change, ("target", "value"), ("offset", "mask", "operation"), path)
         if change["target"] == "address":
             obj(change, ("target", "value"), (), path)
             if "destination" in result:
                 raise ConfigError("書き換え内容: I2Cアドレスは1つだけ指定してください")
             result["destination"] = change["value"]
         elif change["target"] == "data":
-            obj(change, ("target", "offset", "value"), ("mask",), path)
+            obj(change, ("target", "offset", "value"), ("mask", "operation"), path)
             result["patches"].append({key: value for key, value in change.items() if key != "target"})
         else:
             raise ConfigError(f"{path}: targetはaddress（下流I2Cアドレス）またはdata（データ）です")
