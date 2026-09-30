@@ -3,12 +3,102 @@ import tkinter as tk
 import unittest
 from i2c_gate.config import default_config, loads
 from i2c_gate.gui import App, RuleDialog
-from i2c_gate.rule_editor import ADDRESS_NACK, DATA_NACK
+from i2c_gate.rule_editor import ADDRESS_NACK, DATA_NACK, AUTO, FORCE_ACK, MATCH_NACK, MATCH_BLOCK
 from i2c_gate.engine import simulate, simulate_combined
 from i2c_gate.wire import encode_config
 
 
 class GuiTests(unittest.TestCase):
+    def test_ack_senders_and_override_colors(self):
+        dialog = self.dialog()
+        def ack_box(row, index):
+            tag = f"box_{row}_{index}"
+            rectangle, text = dialog.diagram.canvas.find_withtag(tag)
+            return (dialog.diagram.canvas.itemcget(rectangle, "fill"),
+                    dialog.diagram.canvas.itemcget(text, "text"))
+        normal = dialog.diagram.COLORS["ack"]
+        override = dialog.diagram.COLORS["override"]
+        for kind in ("write", "read", "write→read"):
+            dialog.kind.set(kind)
+            dialog.response.set(AUTO)
+            row = 1 if kind == "write→read" else 0
+            sender = "デバイス" if kind == "write" else "ホスト"
+            self.assertEqual(ack_box(row, 2)[0], normal)
+            self.assertIn("送信: デバイス", ack_box(row, 2)[1])
+            self.assertEqual(ack_box(row, 4)[0], normal)
+            self.assertIn(f"送信: {sender}", ack_box(row, 4)[1])
+            dialog.response.set(ADDRESS_NACK)
+            self.assertEqual(ack_box(row, 2)[0], override)
+            self.assertIn("Gate上書き", ack_box(row, 2)[1])
+            self.assertIn("→ホスト", ack_box(row, 2)[1])
+            self.assertEqual(ack_box(row, 4)[0], normal)
+            dialog.response.set(DATA_NACK)
+            dialog.nack_at.set("3")
+            self.assertEqual(ack_box(row, 2)[0], normal)
+            self.assertEqual(ack_box(row, 4)[0], override)
+            self.assertIn("NACK [3]", ack_box(row, 4)[1])
+            self.assertIn(f"本来: {sender}", ack_box(row, 4)[1])
+            self.assertIn("→ホスト" if kind == "write" else "→デバイス", ack_box(row, 4)[1])
+            if kind == "write→read":
+                for index in (2, 4):
+                    self.assertEqual(ack_box(0, index)[0], normal)
+                    self.assertIn("送信: デバイス", ack_box(0, index)[1])
+            dialog.response.set(AUTO)
+            self.assertEqual(ack_box(row, 4)[0], normal)
+        dialog.kind.set("read")
+        for mode in (FORCE_ACK, MATCH_NACK):
+            dialog.response.set(mode)
+            self.assertEqual(ack_box(0, 4)[0], override)
+            self.assertIn("Gate上書き", ack_box(0, 4)[1])
+        dialog.response.set(MATCH_BLOCK)
+        self.assertEqual(ack_box(0, 4)[0], normal)  # READ fill substitution does not override ACK.
+
+    def test_diagrams_follow_transaction_and_nack_settings(self):
+        dialog = self.dialog()
+        for kind, tokens in (("write", ("[W-A]", "[W-B]")),
+                             ("write→read", ("[W-A]", "[W-B]", "[R-A]", "[R-B]", "Sr")),
+                             ("read", ("[R-A]", "[R-B]"))):
+            dialog.kind.set(kind)
+            labels = " ".join(label for _, label in dialog.diagram.boxes)
+            for token in tokens:
+                self.assertIn(token, labels)
+            self.assertEqual(labels.count("STOP"), 1)
+            self.assertEqual(labels.count("START"), 1)
+            if kind == "read":
+                self.assertNotIn("[W-A]", labels)
+        dialog.address.set("0x52")
+        self.assertIn("0x52", " ".join(label for _, label in dialog.diagram.boxes))
+        dialog.response.set(DATA_NACK)
+        dialog.nack_at.set("3")
+        self.assertIn("NACK [3]", " ".join(label for _, label in dialog.diagram.boxes))
+        dialog.response.set(ADDRESS_NACK)
+        self.assertIn("NACK指定", " ".join(label for _, label in dialog.diagram.boxes))
+
+    def test_diagram_navigation_and_field_focus(self):
+        self.app.deiconify()
+        dialog = RuleDialog(self.app, default_config())
+        dialog.kind.set("write→read")
+        dialog.geometry("700x620")
+        dialog.update()
+        dialog.diagram.activate("ack")
+        dialog.update()
+        self.assertEqual(dialog.tabs.index(dialog.tabs.select()), 1)
+        self.assertEqual(dialog.diagram.selected, "ack")
+        dialog.diagram.activate("previous_data")
+        dialog.update()
+        self.assertEqual(dialog.tabs.index(dialog.tabs.select()), 0)
+        self.assertEqual(dialog.diagram.selected, "previous_data")
+        dialog.current_address_entry.event_generate("<FocusIn>")
+        self.assertEqual(dialog.diagram.selected, "address")
+        dialog.tabs.select(1)
+        dialog.diagram.activate("data")
+        dialog.update()
+        self.assertEqual(dialog.tabs.index(dialog.tabs.select()), 1)
+        self.assertEqual(dialog.diagram.selected, "data")
+        self.assertIn("R-B", dialog.change_data_label.cget("text"))
+        self.assertLessEqual(dialog.diagram.canvas.bbox("all")[2], dialog.diagram.canvas.winfo_width())
+        dialog.destroy()
+
     def test_and_or_controls_save_and_reopen(self):
         dialog = self.dialog()
         dialog.changes.add({"offset": 0, "operation": "AND", "value": 0xF0})
